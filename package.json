@@ -1,6 +1,6 @@
 {
   "name": "dsh-mint-budgie",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "type": "module",
   "description": "Mint Budgie desktop pet for DeepSeek Harness: a sprite-sheet companion that reacts to the active agent status, mirroring the Codex desktop pet.",
   "license": "MIT",
@@ -45,6 +45,7 @@
     "assets/spritesheet.png",
     "assets/poses/idle_*.png",
     "assets/poses/head-tilt_*.png",
+    "assets/poses/head-stretch_*.png",
     "assets/poses/idle.png",
     "assets/poses/poses.json",
     "desktop/mint-budgie.exe",

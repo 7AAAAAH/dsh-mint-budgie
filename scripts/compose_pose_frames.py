@@ -11,15 +11,25 @@ from PIL import Image
 POSE_ROOT = Path(__file__).resolve().parents[1] / "assets" / "poses"
 CELL_SIZE = (192, 208)
 
-# Hold the user-approved tilt, then let the gesture finish on its own and
-# restore standing. Keeping standing out of the gesture sequence avoids an
-# extra transitional redraw before the final pose.
+# Every gesture starts and finishes on the same standing frame.
 HEAD_TILT_PHASES = (
+    "idle_base.png",
     "peek_base.png",
     "peek_base.png",
     "peek_base.png",
     "peek_base.png",
     "peek_base.png",
+    "idle_base.png",
+)
+
+HEAD_STRETCH_PHASES = (
+    "idle_base.png",
+    "peek_1.png",
+    "peek_2.png",
+    "peek_3.png",
+    "peek_2.png",
+    "peek_1.png",
+    "idle_base.png",
 )
 
 
@@ -34,12 +44,17 @@ def load_cell(name: str) -> Image.Image:
     return canvas
 
 
-def generate_head_tilt() -> None:
-    for stale in POSE_ROOT.glob("head-tilt_*.png"):
+def generate_pose(name: str, phases: tuple[str, ...]) -> None:
+    for stale in POSE_ROOT.glob(f"{name}_*.png"):
         stale.unlink()
-    for index, name in enumerate(HEAD_TILT_PHASES):
-        cell = load_cell(name)
-        cell.save(POSE_ROOT / f"head-tilt_{index}.png")
+    for index, source in enumerate(phases):
+        cell = load_cell(source)
+        cell.save(POSE_ROOT / f"{name}_{index}.png")
+
+
+def generate_gestures() -> None:
+    generate_pose("head-tilt", HEAD_TILT_PHASES)
+    generate_pose("head-stretch", HEAD_STRETCH_PHASES)
 
 
 def main() -> None:
@@ -49,11 +64,25 @@ def main() -> None:
         action="store_true",
         help="generate the click head-tilt frames",
     )
+    parser.add_argument(
+        "--head-stretch",
+        action="store_true",
+        help="generate the click head-stretch frames",
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="generate every click gesture",
+    )
     args = parser.parse_args()
-    if args.head_tilt:
-        generate_head_tilt()
+    if args.all:
+        generate_gestures()
+    elif args.head_tilt:
+        generate_pose("head-tilt", HEAD_TILT_PHASES)
+    elif args.head_stretch:
+        generate_pose("head-stretch", HEAD_STRETCH_PHASES)
     else:
-        raise SystemExit("Choose --head-tilt.")
+        raise SystemExit("Choose --head-tilt, --head-stretch, or --all.")
 
 
 if __name__ == "__main__":

@@ -32,16 +32,19 @@ MIN_SETTINGS_WIDTH = 320
 MIN_SETTINGS_HEIGHT = 230
 DEFAULT_SETTINGS_WIDTH = 420
 DEFAULT_SETTINGS_HEIGHT = 270
-POSE_NAMES = ("idle", "head-tilt")
-GESTURE_POSES = ("head-tilt",)
-CLICK_POSE = "head-tilt"
+POSE_NAMES = ("idle", "head-tilt", "head-stretch")
+GESTURE_POSES = ("head-tilt", "head-stretch")
+CLICK_POSES = ("head-tilt", "head-stretch")
+STAND_FRAME_MS = 80
 POSE_FRAME_MS = {
     "idle": 1000,
     "head-tilt": 220,
+    "head-stretch": 180,
 }
 POSE_FRAME_COUNTS = {
     "idle": 6,
-    "head-tilt": 5,
+    "head-tilt": 7,
+    "head-stretch": 7,
 }
 RUNNING_JUMP_SCALE = 0.4
 
@@ -1069,6 +1072,7 @@ class PetWindow:
         self.pose = "idle"
         self.gesture_token = 0
         self.gesture_after_job = None
+        self.next_click_pose = 0
         self.single_click_job = None
         self.frame = 0
         self.drag_origin = None
@@ -1355,8 +1359,14 @@ class PetWindow:
 
     def _run_single_click(self):
         self.single_click_job = None
-        self._log(f"single-click gesture pose={CLICK_POSE}")
-        self._start_gesture(CLICK_POSE)
+        pose = self._next_click_gesture()
+        self._log(f"single-click gesture pose={pose}")
+        self._start_gesture(pose)
+
+    def _next_click_gesture(self):
+        pose = CLICK_POSES[self.next_click_pose]
+        self.next_click_pose = (self.next_click_pose + 1) % len(CLICK_POSES)
+        return pose
 
     def _cancel_single_click(self):
         if self.single_click_job is None:
@@ -1382,7 +1392,7 @@ class PetWindow:
         )
         self._render_frame()
         self.gesture_after_job = self.root.after(
-            POSE_FRAME_MS.get(self.pose, 240),
+            self._gesture_frame_delay(self.pose, self.frame),
             lambda: self._advance_gesture(token),
         )
 
@@ -1397,9 +1407,15 @@ class PetWindow:
             return
         self._render_frame()
         self.gesture_after_job = self.root.after(
-            POSE_FRAME_MS.get(self.pose, 240),
+            self._gesture_frame_delay(self.pose, self.frame),
             lambda: self._advance_gesture(token),
         )
+
+    def _gesture_frame_delay(self, pose: str, frame: int) -> int:
+        frames = self.poses.get(pose, ())
+        if frame <= 0 or frame >= len(frames) - 1:
+            return STAND_FRAME_MS
+        return POSE_FRAME_MS.get(pose, 240)
 
     def _finish_gesture(self):
         self._cancel_gesture_timer()
@@ -1428,11 +1444,12 @@ class PetWindow:
         if self.dragged:
             return "break"
         self._cancel_single_click()
-        self._log(f"double-click gesture pose={CLICK_POSE}")
+        pose = self._next_click_gesture()
+        self._log(f"double-click gesture pose={pose}")
         self.dragged = True
         self.bubble.restore()
         self._open_dsh()
-        self._start_gesture(CLICK_POSE)
+        self._start_gesture(pose)
         return "break"
 
     def _on_right_click(self, event):
