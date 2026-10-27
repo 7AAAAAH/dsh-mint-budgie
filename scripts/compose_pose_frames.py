@@ -40,9 +40,9 @@ WING_POSES = {
 # Each source uses a different perspective. These factors normalize the
 # apparent head size while scaling the complete drawing uniformly.
 HEAD_SCALES = {
-    "head-tilt": 1.013,
-    "cheer": 1.86,
-    "wave": 1.04,
+    "head-tilt": 0.993,
+    "cheer": 1.823,
+    "wave": 1.065,
 }
 
 
