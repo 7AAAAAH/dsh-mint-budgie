@@ -9,7 +9,7 @@ English | [简体中文](README.zh.md)
 ## Features
 
 - Drag the pet across every monitor on the Windows virtual desktop.
-- Single-click or double-click to play one head-tilt gesture.
+- Single-click or double-click to play the supplied head-tilt pose.
 - Double-click restores the task bubble and opens or focuses dsh.
 - Right-click for settings or to hide the pet.
 - Size and opacity support sliders, numeric input and reset; both persist.
@@ -41,8 +41,10 @@ The process uses a per-monitor DPI-aware context so mixed-scale monitors keep
 consistent sprite and window coordinates. The pet reads
 `desktop/settings.json`; the right-click settings panel writes back to it.
 
-Pillow and tkinter are required. Python is resolved from `DSH_PET_PYTHON`
-first, then `pyw.exe`, `pythonw.exe`, `py.exe`, and `python.exe` on `PATH`.
+The packaged `desktop/mint-budgie.exe` is used first, so Windows users do not
+need Python. If the executable is unavailable, Pillow and tkinter are required
+and Python is resolved from `DSH_PET_PYTHON`, then `pyw.exe`, `pythonw.exe`,
+`py.exe`, and `python.exe` on `PATH`.
 
 ## Install
 
@@ -67,7 +69,7 @@ Windows is currently the only supported platform.
 - `client.js` - compatibility shim; intentionally registers no in-window pet
 - `desktop/pet-window.pyw` - standalone desktop overlay
 - `assets/spritesheet.png` - working/status sheet read by the desktop overlay
-- `assets/poses/<name>_<frame>.png` - aligned click and idle action frames
+- `assets/poses/head-tilt_<frame>.png` - aligned click gesture frames
 
 ## Disabling
 

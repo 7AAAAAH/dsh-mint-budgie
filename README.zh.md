@@ -6,7 +6,7 @@
 
 - 工作状态浮窗固定在宠物旁，深灰半透明、圆角，项目名在上，当前工作内容在下。
 - 长工作内容自动横向循环滚动；空闲时不显示“空闲”或任务浮窗。
-- 单击或双击宠物播放一次歪头动画，播放结束后回到站立姿势。
+- 单击或双击宠物播放一次 `peek` 歪头姿态，播放结束后回到站立姿势。
 - 双击会恢复/最小化任务浮窗，并打开或聚焦 DSH。
 - 右键打开设置或隐藏宠物。
 - 设置支持宠物大小、透明度、滑杆和数值输入，窗口本身可调整大小。
@@ -16,7 +16,7 @@
 
 ### 从 DSH 插件市场
 
-在 DSH 中打开 **插件 → 发现**，搜索 `dsh-mint-budgie`，安装后重启 DSH。首次启动桌宠需要本机有 Python 3、Tkinter 和 Pillow。
+在 DSH 中打开 **插件 → 发现**，搜索 `dsh-mint-budgie`，安装后重启 DSH。安装包已带 `desktop/mint-budgie.exe`，通常不需要额外安装 Python。
 
 ### 从 npm 安装
 
@@ -26,7 +26,9 @@ dsh plugin --profile desktop add dsh-mint-budgie
 
 安装后重启 DSH。插件 Host 会自动启动 `desktop/pet-window.pyw`。
 
-### Python 依赖
+### 可选：Python 运行方式
+
+插件优先运行 `desktop/mint-budgie.exe`。只有删除该文件、改用源码模式时，才需要：
 
 ```powershell
 py -m pip install Pillow

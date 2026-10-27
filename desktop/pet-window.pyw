@@ -11,7 +11,6 @@ from ctypes import wintypes
 import json
 import os
 from pathlib import Path
-import random
 import subprocess
 import sys
 
@@ -23,34 +22,28 @@ import tkinter as tk
 CELL_W = 192
 CELL_H = 208
 DEFAULT_SCALE = 0.62
-DEFAULT_SIZE_PERCENT = 100
+DEFAULT_SIZE_PERCENT = 65
 MIN_SIZE_PERCENT = 30
 MAX_SIZE_PERCENT = 180
-DEFAULT_OPACITY_PERCENT = 100
+DEFAULT_OPACITY_PERCENT = 75
 MIN_OPACITY_PERCENT = 20
 MAX_OPACITY_PERCENT = 100
 MIN_SETTINGS_WIDTH = 320
 MIN_SETTINGS_HEIGHT = 230
 DEFAULT_SETTINGS_WIDTH = 420
 DEFAULT_SETTINGS_HEIGHT = 270
-RUNNING_JUMP_SCALE = 0.5
-POSE_NAMES = ("idle", "peek", "cheer", "wave")
-GESTURE_POSES = ("cheer", "wave", "peek")
-CLICK_POSE = "wave"
-# Gestures are click/random-triggered, play once, then return to standing.
-POSE_INTERVAL_MS = 42000
+POSE_NAMES = ("idle", "head-tilt")
+GESTURE_POSES = ("head-tilt",)
+CLICK_POSE = "head-tilt"
 POSE_FRAME_MS = {
     "idle": 1000,
-    "peek": 260,
-    "cheer": 190,
-    "wave": 260,
+    "head-tilt": 260,
 }
 POSE_FRAME_COUNTS = {
     "idle": 6,
-    "peek": 6,
-    "cheer": 8,
-    "wave": 6,
+    "head-tilt": 6,
 }
+RUNNING_JUMP_SCALE = 0.4
 
 ROWS = [
     ("idle", 6),
@@ -76,13 +69,6 @@ FRAME_MS = {
     "waiting": 240,
     "running": 190,
     "review": 200,
-}
-
-STATUS_LABELS = {
-    "running": "\u8fd0\u884c\u4e2d",
-    "waiting": "\u7b49\u5f85\u786e\u8ba4",
-    "failed": "\u51fa\u9519\u4e86",
-    "review": "\u5ba1\u67e5\u4e2d",
 }
 
 STATUS_COLORS = {
@@ -756,7 +742,7 @@ class ContextMenu:
         self.window.overrideredirect(True)
         self.window.attributes("-topmost", True)
         self.window.attributes("-transparentcolor", TRANSPARENT_KEY)
-        self.window.attributes("-alpha", 0.96)
+        self.window.attributes("-alpha", 0.96 * pet.opacity_percent / 100)
         self.window.configure(bg=TRANSPARENT_KEY)
         self.canvas = tk.Canvas(
             self.window,
@@ -850,6 +836,7 @@ class SettingsWindow:
         self.window.overrideredirect(True)
         self.window.attributes("-topmost", True)
         self.window.attributes("-transparentcolor", TRANSPARENT_KEY)
+        self.window.attributes("-alpha", pet.opacity_percent / 100)
         self.window.configure(bg=TRANSPARENT_KEY)
         self.window.withdraw()
         self.canvas = tk.Canvas(
@@ -1080,8 +1067,6 @@ class PetWindow:
         self.status = "idle"
         self.row = "idle"
         self.pose = "idle"
-        self.pose_timer = None
-        self.gesture_finished = False
         self.gesture_token = 0
         self.single_click_job = None
         self.frame = 0
@@ -1154,7 +1139,6 @@ class PetWindow:
         self.root.geometry(self._initial_geometry(width, height))
         self.root.after(120, self._tick_state)
         self.root.after(60, self._tick_animation)
-        self.root.after(POSE_INTERVAL_MS, self._randomize_pose)
 
     def _load_settings(self) -> tuple[int, int]:
         if not self.settings_path or not self.settings_path.exists():
@@ -1248,21 +1232,25 @@ class PetWindow:
         return round(CELL_H * DEFAULT_SCALE * self.size_percent / 100)
 
     def _window_size(self):
-        return self._display_width() + 24, self._display_height() + 16
+        # Reserve the full 192x208 cell so wide head-tilt and wing frames never
+        # clip at the top or sides while the pet body stays on one baseline.
+        margin = 8
+        return self._display_width() + margin * 2, self._display_height() + margin * 2
 
     @staticmethod
     def _sprite_top() -> int:
         return 8
 
-    def _scale_running_jump(self, cell: Image.Image) -> Image.Image:
-        """Reduce the working animation's vertical travel without resizing it."""
+    def _scaled_running_jump(self, cell: Image.Image) -> Image.Image:
+        """Keep the work bob, but reduce its vertical travel to 40%."""
         if self.row != "running":
             return cell
         bbox = cell.getchannel("A").getbbox()
         if not bbox:
             return cell
-        standing_bottom = 194
-        shift = round((standing_bottom - bbox[3]) * RUNNING_JUMP_SCALE)
+        _, _, _, bottom = bbox
+        target_bottom = round(194 - (194 - bottom) * RUNNING_JUMP_SCALE)
+        shift = target_bottom - bottom
         if shift <= 0:
             return cell
         reduced = Image.new("RGBA", cell.size, (0, 0, 0, 0))
@@ -1302,7 +1290,17 @@ class PetWindow:
         self.opacity_percent = percent
         alpha = percent / 100
         self.root.attributes("-alpha", alpha)
-        self.bubble.window.attributes("-alpha", BUBBLE_OPACITY)
+        self.bubble.window.attributes("-alpha", BUBBLE_OPACITY * alpha)
+        if self.menu is not None:
+            try:
+                self.menu.window.attributes("-alpha", 0.96 * alpha)
+            except tk.TclError:
+                pass
+        if self.settings_window is not None:
+            try:
+                self.settings_window.window.attributes("-alpha", alpha)
+            except tk.TclError:
+                pass
         self._save_settings()
 
     def _on_press(self, event):
@@ -1373,7 +1371,6 @@ class PetWindow:
             self._log(f"gesture skipped pose={pose}: pose unavailable")
             return
         self.pose = pose
-        self.gesture_finished = False
         self.gesture_token += 1
         token = self.gesture_token
         self.frame = 0
@@ -1409,22 +1406,7 @@ class PetWindow:
         )
         self.pose = "idle"
         self.frame = 0
-        self.gesture_finished = True
         self._render_frame()
-
-    def _randomize_pose(self):
-        self.pose_timer = None
-        # Do not replace the standing pose on a timer. Gestures happen on
-        # click only; an idle desktop pet must remain still.
-        self._schedule_pose_timer()
-
-    def _schedule_pose_timer(self):
-        if self.pose_timer is not None:
-            try:
-                self.root.after_cancel(self.pose_timer)
-            except tk.TclError:
-                pass
-        self.pose_timer = self.root.after(POSE_INTERVAL_MS, self._randomize_pose)
 
     def _on_configure(self, event):
         if event.widget is self.root and self.bubble.visible:
@@ -1436,13 +1418,8 @@ class PetWindow:
         self._cancel_single_click()
         self._log(f"double-click gesture pose={CLICK_POSE}")
         self.dragged = True
-        was_collapsed = self.bubble.collapsed
-        if self.bubble.collapsed:
-            self.bubble.restore()
-        else:
-            self.bubble.hide_temporarily()
-        if not was_collapsed:
-            self._open_dsh()
+        self.bubble.restore()
+        self._open_dsh()
         self._start_gesture(CLICK_POSE)
         return "break"
 
@@ -1534,18 +1511,20 @@ class PetWindow:
             pid = wintypes.DWORD()
             user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
             executable = self._process_path(pid.value)
-            if not executable.lower().endswith("deepseek harness.exe"):
-                return True
             title_length = user32.GetWindowTextLengthW(hwnd)
             title = ctypes.create_unicode_buffer(title_length + 1)
             user32.GetWindowTextW(hwnd, title, title_length + 1)
+            executable_matches = executable.lower().endswith("deepseek harness.exe")
+            title_matches = "DeepSeek Harness" in title.value
+            if not executable_matches and not title_matches:
+                return True
             class_name = ctypes.create_unicode_buffer(256)
             user32.GetClassNameW(hwnd, class_name, 256)
             visible = bool(user32.IsWindowVisible(hwnd))
             score = 0
             if pid.value == preferred_pid:
                 score += 50
-            if "DeepSeek Harness" in title.value:
+            if title_matches:
                 score += 100
             elif title.value:
                 score += 35
@@ -1699,16 +1678,17 @@ class PetWindow:
                     self.gesture_token += 1
                     self.pose = "idle"
                     self.frame = 0
-                    self.gesture_finished = False
-            if working and self.status == "idle":
-                self.status = "running"
+            if not working and self.status == "running":
+                self.status = "idle"
+                self.row = "idle"
+                if self.pose not in GESTURE_POSES:
+                    self.frame = 0
             visible_status = self.status
             if visible_status == "running" and self.pose not in GESTURE_POSES:
                 self.row = "running"
                 self.frame = 0
             self.bubble.update(visible_status, self.task, activity)
             self._render_frame()
-            self._schedule_pose_timer()
         self.root.after(120, self._tick_state)
 
     def _tick_animation(self):
@@ -1739,9 +1719,10 @@ class PetWindow:
             cell = frames[self.frame % len(frames)]
             cell = cell.resize((display_w, display_h), Image.Resampling.NEAREST)
             composed = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-            x = (width - cell.width) // 2
-            y = self._sprite_top() + display_h - cell.height
-            composed.alpha_composite(cell, (x, y))
+            composed.alpha_composite(
+                cell,
+                ((width - display_w) // 2, self._sprite_top()),
+            )
         elif self.status == "idle" and self.pose == "idle":
             # The pose folders contain edited close-up frames. The top-left
             # sheet cell is the original upright standing frame used by Codex.
@@ -1752,21 +1733,13 @@ class PetWindow:
                 cell,
                 ((width - display_w) // 2, self._sprite_top()),
             )
-        elif self.status == "idle" and self.pose in self.poses:
-            frames = self.poses[self.pose]
-            cell = frames[self.frame % len(frames)]
-            cell = cell.resize((display_w, display_h), Image.Resampling.NEAREST)
-            composed = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-            x = (width - cell.width) // 2
-            y = self._sprite_top() + display_h - cell.height
-            composed.alpha_composite(cell, (x, y))
         else:
             animation_row = "jumping" if self.row == "running" else self.row
             row_index = ROW_INDEX.get(animation_row, 0)
             left = self.frame * CELL_W
             top = row_index * CELL_H
             cell = self.sheet.crop((left, top, left + CELL_W, top + CELL_H))
-            cell = self._scale_running_jump(cell)
+            cell = self._scaled_running_jump(cell)
             cell = cell.resize((display_w, display_h), Image.Resampling.NEAREST)
             composed = Image.new("RGBA", (width, height), (0, 0, 0, 0))
             composed.alpha_composite(

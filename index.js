@@ -21,6 +21,7 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import {
   closeSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   openSync,
@@ -54,10 +55,15 @@ const DESKTOP_STATE_PATH = join(DESKTOP_DIR, 'state.json')
 const DESKTOP_POSITION_PATH = join(DESKTOP_DIR, 'position.json')
 const DESKTOP_SETTINGS_PATH = join(DESKTOP_DIR, 'settings.json')
 const DESKTOP_SCRIPT = join(DESKTOP_DIR, 'pet-window.pyw')
+const DESKTOP_EXE = join(DESKTOP_DIR, 'mint-budgie.exe')
 const DESKTOP_SPRITE = join(PLUGIN_DIR, 'assets', 'spritesheet.png')
 const DESKTOP_PROCESS_PATH = join(DESKTOP_DIR, 'pet.pid')
 const DESKTOP_DSH_PID_PATH = join(DESKTOP_DIR, 'dsh.pid')
 const DESKTOP_HIDDEN_PATH = join(DESKTOP_DIR, 'hidden.flag')
+const USER_DATA_DIR = join(process.env.APPDATA || homedir(), 'dsh-mint-budgie')
+const USER_STATE_PATH = join(USER_DATA_DIR, 'state.json')
+const USER_POSITION_PATH = join(USER_DATA_DIR, 'position.json')
+const USER_SETTINGS_PATH = join(USER_DATA_DIR, 'settings.json')
 const SESSION_CACHE_DIR = join(homedir(), '.dsh', 'storages', 'session_projcache', 'sessions')
 
 /** How long the pet keeps the failure row after `agent/error`. */
@@ -305,6 +311,20 @@ function createDesktopPet(ctx) {
   let launchPending = false
   const LAUNCH_LOG = join(DESKTOP_DIR, 'launch.log')
 
+  function seedUserFiles() {
+    try {
+      mkdirSync(USER_DATA_DIR, { recursive: true })
+      if (!existsSync(USER_POSITION_PATH) && existsSync(DESKTOP_POSITION_PATH)) {
+        copyFileSync(DESKTOP_POSITION_PATH, USER_POSITION_PATH)
+      }
+      if (!existsSync(USER_SETTINGS_PATH) && existsSync(DESKTOP_SETTINGS_PATH)) {
+        copyFileSync(DESKTOP_SETTINGS_PATH, USER_SETTINGS_PATH)
+      }
+    } catch {
+      // The packaged defaults remain usable if the migration fails.
+    }
+  }
+
   function log(message) {
     const line = `${new Date().toISOString()} ${message}\n`
     try {
@@ -325,10 +345,10 @@ function createDesktopPet(ctx) {
 
   function writeDesktopState(status, task, sessionId, activity) {
     try {
-      mkdirSync(DESKTOP_DIR, { recursive: true })
-      if (!existsSync(DESKTOP_STATE_PATH)) {
+      mkdirSync(USER_DATA_DIR, { recursive: true })
+      if (!existsSync(USER_STATE_PATH)) {
         writeFileSync(
-          DESKTOP_STATE_PATH,
+          USER_STATE_PATH,
           JSON.stringify({
             status: 'idle',
             task: '',
@@ -344,10 +364,12 @@ function createDesktopPet(ctx) {
         task: task ?? '',
         activity: activity ?? '',
         sessionId: sessionId ?? '',
-        working: hasActiveTurn(ctx.agents),
+        // Status is authoritative here. A stale session projection can keep
+        // an old turn marked open after the selected agent has gone idle.
+        working: status !== 'idle',
         updatedAt: new Date().toISOString(),
       })
-      writeFileSync(DESKTOP_STATE_PATH, payload, 'utf8')
+      writeFileSync(USER_STATE_PATH, payload, 'utf8')
     } catch {
       // Overlay is optional; never fail the Host because of it.
     }
@@ -385,21 +407,64 @@ function createDesktopPet(ctx) {
     // Retry at most every 10s: a window that cannot start must not spin the Host.
     if (Date.now() - lastLaunchAt < 10000) return
     lastLaunchAt = Date.now()
-    if (!existsSync(DESKTOP_SCRIPT) || !existsSync(DESKTOP_SPRITE)) {
-      log(`launch skipped: script=${existsSync(DESKTOP_SCRIPT)} sprite=${existsSync(DESKTOP_SPRITE)}`)
+    const hasLauncher = existsSync(DESKTOP_EXE) || existsSync(DESKTOP_SCRIPT)
+    if (!hasLauncher || !existsSync(DESKTOP_SPRITE)) {
+      log(`launch skipped: exe=${existsSync(DESKTOP_EXE)} script=${existsSync(DESKTOP_SCRIPT)} sprite=${existsSync(DESKTOP_SPRITE)}`)
       return
     }
 
     launchPending = true
     try {
+      seedUserFiles()
+      if (existsSync(DESKTOP_EXE)) {
+        const args = [
+          '--sprite', DESKTOP_SPRITE,
+          '--state', USER_STATE_PATH,
+          '--position', USER_POSITION_PATH,
+          '--settings', USER_SETTINGS_PATH,
+          '--parent-pid', String(process.pid),
+          '--anchor-pid', String(process.ppid),
+        ]
+        if (!existsSync(LAUNCH_LOG)) {
+          try { writeFileSync(LAUNCH_LOG, '') } catch { /* optional */ }
+        }
+        const out = openSync(LAUNCH_LOG, 'a')
+        const spawned = spawn(DESKTOP_EXE, args, {
+          stdio: ['ignore', out, out],
+          detached: true,
+          windowsHide: true,
+        })
+        closeSync(out)
+        spawned.unref()
+        log(`spawn desktop exe pid=${spawned.pid ?? 'none'}`)
+        if (spawned.pid) {
+          try { writeFileSync(DESKTOP_PROCESS_PATH, String(spawned.pid)) } catch { /* optional */ }
+        }
+        spawned.once('error', (error) => {
+          log(`desktop exe error ${error.code ?? ''} ${String(error.message).split('\n')[0]}`)
+          child = null
+          launchPending = false
+        })
+        spawned.once('exit', (code, signal) => {
+          log(`desktop exe exit code=${code} signal=${signal}`)
+          child = null
+          launchPending = false
+          if (!petRunning()) {
+            try { unlinkSync(DESKTOP_PROCESS_PATH) } catch { /* optional */ }
+          }
+        })
+        child = spawned
+        launchPending = false
+        return
+      }
       for (const executable of pythonCandidates) {
         try {
           const args = [
             DESKTOP_SCRIPT,
             '--sprite', DESKTOP_SPRITE,
-            '--state', DESKTOP_STATE_PATH,
-            '--position', DESKTOP_POSITION_PATH,
-            '--settings', DESKTOP_SETTINGS_PATH,
+            '--state', USER_STATE_PATH,
+            '--position', USER_POSITION_PATH,
+            '--settings', USER_SETTINGS_PATH,
             '--parent-pid', String(process.pid),
             '--anchor-pid', String(process.ppid),
           ]
@@ -521,7 +586,7 @@ export function apply(ctx) {
       task: currentTask(),
       activity: activityForStatus(status),
       sessionId: currentSessionId(),
-      working: hasActiveTurn(ctx.agents),
+      working: status !== 'idle',
     }
   }
 
@@ -535,7 +600,7 @@ export function apply(ctx) {
 
   /** Publish status changes, and refresh desktop when working changes. */
   function setStatus(next) {
-    const working = hasActiveTurn(ctx.agents)
+    const working = next !== 'idle'
     const activity = activityForStatus(next)
     if (next === current && working === lastWorking && activity === lastActivity) return
     current = next
