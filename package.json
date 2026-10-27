@@ -1,0 +1,68 @@
+{
+  "name": "dsh-mint-budgie",
+  "version": "0.4.1",
+  "type": "module",
+  "description": "Mint Budgie desktop pet for DeepSeek Harness: a sprite-sheet companion that reacts to the active agent status, mirroring the Codex desktop pet.",
+  "license": "MIT",
+  "author": "7AAAAAH",
+  "icon": "./icon.svg",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/7AAAAAH/dsh-mint-budgie.git"
+  },
+  "bugs": {
+    "url": "https://github.com/7AAAAAH/dsh-mint-budgie/issues"
+  },
+  "homepage": "https://github.com/7AAAAAH/dsh-mint-budgie#readme",
+  "keywords": [
+    "deepseek",
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "desktop-pet",
+    "virtual-pet",
+    "mint-budgie",
+    "windows"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "assets/spritesheet.webp",
+    "assets/spritesheet.png",
+    "assets/poses/idle_*.png",
+    "assets/poses/peek_*.png",
+    "assets/poses/cheer_*.png",
+    "assets/poses/wave_*.png",
+    "assets/poses/idle.png",
+    "assets/poses/peek.png",
+    "assets/poses/cheer.png",
+    "assets/poses/wave.png",
+    "assets/poses/poses.json",
+    "desktop/pet-window.pyw",
+    "desktop/start-pet.ps1",
+    "desktop/setup-startup.ps1",
+    "locale/*.json",
+    "icon.svg",
+    "LICENSE",
+    "README.md",
+    "README.zh.md"
+  ],
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "manifestVersion": 1
+  }
+}

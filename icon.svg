@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Mint Budgie pet">
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="#3aa675"/>
+  <g fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M20 40c0-10 8-16 14-16"/>
+    <circle cx="34" cy="24" r="3" fill="#ffffff" stroke="none"/>
+    <path d="M44 36c4 2 7 6 7 10"/>
+  </g>
+</svg>

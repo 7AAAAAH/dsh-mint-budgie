@@ -1,0 +1,22 @@
+[
+  {
+    "name": "peek",
+    "file": "poses/peek.png",
+    "scale": 0.0914
+  },
+  {
+    "name": "cheer",
+    "file": "poses/cheer.png",
+    "scale": 0.0884
+  },
+  {
+    "name": "idle",
+    "file": "poses/idle.png",
+    "scale": 0.0944
+  },
+  {
+    "name": "wave",
+    "file": "poses/wave.png",
+    "scale": 0.0932
+  }
+]

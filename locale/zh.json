@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Mint Budgie 宠物",
+    "description": "在窗口右下角显示一只 Mint Budgie 桌面宠物，它会根据当前 agent 的状态（运行/等待/失败/审查等）切换动画，复刻 Codex 桌面宠物的效果。"
+  }
+}
