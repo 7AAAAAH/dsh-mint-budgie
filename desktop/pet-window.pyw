@@ -616,7 +616,10 @@ class StatusBubble:
         self.canvas.configure(width=width, height=height)
         self.canvas.delete("all")
         self.image_item = self.canvas.create_image(0, 0, image=self.photo, anchor="nw")
-        self.window.geometry(f"{width}x{height}+0+0")
+        # Repaints (minimize-button hover, marquee ticks, status updates) must
+        # only change the size. Including coordinates here snapped the bubble
+        # to the desktop origin whenever it repainted.
+        self.window.geometry(f"{width}x{height}")
 
     def _on_press(self, event):
         if self._inside_minimize(event.x, event.y):
