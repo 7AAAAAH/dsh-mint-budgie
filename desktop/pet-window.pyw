@@ -37,7 +37,7 @@ GESTURE_POSES = ("head-tilt",)
 CLICK_POSE = "head-tilt"
 POSE_FRAME_MS = {
     "idle": 1000,
-    "head-tilt": 260,
+    "head-tilt": 220,
 }
 POSE_FRAME_COUNTS = {
     "idle": 6,
