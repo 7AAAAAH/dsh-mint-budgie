@@ -11,6 +11,7 @@ from ctypes import wintypes
 import json
 import os
 from pathlib import Path
+import random
 import subprocess
 import sys
 
@@ -1072,7 +1073,7 @@ class PetWindow:
         self.pose = "idle"
         self.gesture_token = 0
         self.gesture_after_job = None
-        self.next_click_pose = 0
+        self.last_click_pose = None
         self.single_click_job = None
         self.frame = 0
         self.drag_origin = None
@@ -1355,7 +1356,7 @@ class PetWindow:
         self._cancel_single_click()
         # Delay the single-click gesture so a recognized double-click can
         # replace it cleanly instead of briefly starting another pose.
-        self.single_click_job = self.root.after(260, self._run_single_click)
+        self.single_click_job = self.root.after(180, self._run_single_click)
 
     def _run_single_click(self):
         self.single_click_job = None
@@ -1364,8 +1365,9 @@ class PetWindow:
         self._start_gesture(pose)
 
     def _next_click_gesture(self):
-        pose = CLICK_POSES[self.next_click_pose]
-        self.next_click_pose = (self.next_click_pose + 1) % len(CLICK_POSES)
+        choices = [pose for pose in CLICK_POSES if pose != self.last_click_pose]
+        pose = random.choice(choices or list(CLICK_POSES))
+        self.last_click_pose = pose
         return pose
 
     def _cancel_single_click(self):
@@ -1444,12 +1446,9 @@ class PetWindow:
         if self.dragged:
             return "break"
         self._cancel_single_click()
-        pose = self._next_click_gesture()
-        self._log(f"double-click gesture pose={pose}")
+        self._log("double-click toggle dsh window")
         self.dragged = True
-        self.bubble.restore()
-        self._open_dsh()
-        self._start_gesture(pose)
+        self._toggle_dsh_window()
         return "break"
 
     def _on_right_click(self, event):
@@ -1662,6 +1661,28 @@ class PetWindow:
             return
         if self._launch_dsh():
             self.root.after(450, lambda: self._poll_dsh_focus(0))
+
+    def _toggle_dsh_window(self):
+        if sys.platform != "win32":
+            return
+        hwnd = self._find_dsh_window(self._dsh_pid())
+        if hwnd and self._dsh_window_visible(hwnd):
+            self._hide_dsh_window(hwnd)
+            return
+        self._open_dsh()
+
+    def _dsh_window_visible(self, hwnd: int) -> bool:
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.IsWindowVisible.argtypes = [wintypes.HWND]
+        user32.IsWindowVisible.restype = wintypes.BOOL
+        return bool(user32.IsWindowVisible(hwnd))
+
+    def _hide_dsh_window(self, hwnd: int):
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+        user32.ShowWindow.restype = wintypes.BOOL
+        user32.ShowWindow(hwnd, 0)  # SW_HIDE
+        self._log(f"dsh window hidden hwnd={hwnd}")
 
     def _poll_dsh_focus(self, attempt: int):
         hwnd = self._find_dsh_window(self._dsh_pid())
