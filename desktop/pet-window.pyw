@@ -41,7 +41,7 @@ POSE_FRAME_MS = {
 }
 POSE_FRAME_COUNTS = {
     "idle": 6,
-    "head-tilt": 6,
+    "head-tilt": 5,
 }
 RUNNING_JUMP_SCALE = 0.4
 
@@ -1068,6 +1068,7 @@ class PetWindow:
         self.row = "idle"
         self.pose = "idle"
         self.gesture_token = 0
+        self.gesture_after_job = None
         self.single_click_job = None
         self.frame = 0
         self.drag_origin = None
@@ -1370,6 +1371,7 @@ class PetWindow:
         if pose not in GESTURE_POSES or pose not in self.poses:
             self._log(f"gesture skipped pose={pose}: pose unavailable")
             return
+        self._cancel_gesture_timer()
         self.pose = pose
         self.gesture_token += 1
         token = self.gesture_token
@@ -1379,7 +1381,7 @@ class PetWindow:
             f"frames={len(self.poses[self.pose])} token={token}"
         )
         self._render_frame()
-        self.root.after(
+        self.gesture_after_job = self.root.after(
             POSE_FRAME_MS.get(self.pose, 240),
             lambda: self._advance_gesture(token),
         )
@@ -1394,12 +1396,13 @@ class PetWindow:
             self._finish_gesture()
             return
         self._render_frame()
-        self.root.after(
+        self.gesture_after_job = self.root.after(
             POSE_FRAME_MS.get(self.pose, 240),
             lambda: self._advance_gesture(token),
         )
 
     def _finish_gesture(self):
+        self._cancel_gesture_timer()
         self.gesture_token += 1
         self._log(
             f"gesture finish pose={self.pose} frame={self.frame}"
@@ -1407,6 +1410,15 @@ class PetWindow:
         self.pose = "idle"
         self.frame = 0
         self._render_frame()
+
+    def _cancel_gesture_timer(self):
+        if self.gesture_after_job is None:
+            return
+        try:
+            self.root.after_cancel(self.gesture_after_job)
+        except tk.TclError:
+            pass
+        self.gesture_after_job = None
 
     def _on_configure(self, event):
         if event.widget is self.root and self.bubble.visible:
@@ -1694,8 +1706,9 @@ class PetWindow:
     def _tick_animation(self):
         if self.pose in GESTURE_POSES and self.pose in self.poses:
             # The gesture timer owns the frame while a click animation plays.
-            # Poll briefly so the status animation can resume right after it.
-            delay = 120
+            # Do not advance or redraw the work row, or the standing frame would
+            # briefly be replaced by an unrelated animation frame at the end.
+            delay = 160
         elif self.status != "idle":
             # The supplied running row is nearly indistinguishable from
             # standing. Use the more legible jump cycle while work is active.
@@ -1705,9 +1718,12 @@ class PetWindow:
             self.frame = (self.frame + 1) % frames
             delay = FRAME_MS.get(animation_row, 200)
             self._render_frame()
-        else:
-            # Idle and gestures are driven by their own one-shot timer.
+        elif self.pose == "idle":
+            # Standing is static. Repaint only when another state change asks
+            # for it instead of running a hidden idle animation in the background.
             delay = 1000
+        else:
+            delay = 160
         self.root.after(delay, self._tick_animation)
 
     def _render_frame(self):

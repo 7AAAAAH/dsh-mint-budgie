@@ -11,16 +11,15 @@ from PIL import Image
 POSE_ROOT = Path(__file__).resolve().parents[1] / "assets" / "poses"
 CELL_SIZE = (192, 208)
 
-# Start directly in the user-approved tilt, hold it briefly, then return to
-# standing. The source art is already tilted, so no extra rotation or head
-# compositing is needed.
+# Hold the user-approved tilt, then let the gesture finish on its own and
+# restore standing. Keeping standing out of the gesture sequence avoids an
+# extra transitional redraw before the final pose.
 HEAD_TILT_PHASES = (
     "peek_base.png",
     "peek_base.png",
     "peek_base.png",
     "peek_base.png",
     "peek_base.png",
-    "idle_base.png",
 )
 
 
@@ -36,6 +35,8 @@ def load_cell(name: str) -> Image.Image:
 
 
 def generate_head_tilt() -> None:
+    for stale in POSE_ROOT.glob("head-tilt_*.png"):
+        stale.unlink()
     for index, name in enumerate(HEAD_TILT_PHASES):
         cell = load_cell(name)
         cell.save(POSE_ROOT / f"head-tilt_{index}.png")
