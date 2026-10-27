@@ -9,27 +9,28 @@ from PIL import Image
 
 
 POSE_ROOT = Path(__file__).resolve().parents[1] / "assets" / "poses"
+SPRITE_PATH = POSE_ROOT.parent / "spritesheet.png"
 CELL_SIZE = (192, 208)
 
 # Every gesture starts and finishes on the same standing frame.
 HEAD_TILT_PHASES = (
-    "idle_base.png",
+    "standing",
     "peek_base.png",
     "peek_base.png",
     "peek_base.png",
     "peek_base.png",
     "peek_base.png",
-    "idle_base.png",
+    "standing",
 )
 
 HEAD_STRETCH_PHASES = (
-    "idle_base.png",
+    "standing",
     "peek_1.png",
     "peek_2.png",
     "peek_3.png",
     "peek_2.png",
     "peek_1.png",
-    "idle_base.png",
+    "standing",
 )
 
 
@@ -44,11 +45,17 @@ def load_cell(name: str) -> Image.Image:
     return canvas
 
 
+def load_standing_cell() -> Image.Image:
+    """Use the exact frame rendered while idle so gesture starts do not jump."""
+    sheet = Image.open(SPRITE_PATH).convert("RGBA")
+    return sheet.crop((0, 0, CELL_SIZE[0], CELL_SIZE[1]))
+
+
 def generate_pose(name: str, phases: tuple[str, ...]) -> None:
     for stale in POSE_ROOT.glob(f"{name}_*.png"):
         stale.unlink()
     for index, source in enumerate(phases):
-        cell = load_cell(source)
+        cell = load_standing_cell() if source == "standing" else load_cell(source)
         cell.save(POSE_ROOT / f"{name}_{index}.png")
 
 
