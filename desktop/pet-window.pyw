@@ -33,21 +33,23 @@ MIN_SETTINGS_WIDTH = 320
 MIN_SETTINGS_HEIGHT = 230
 DEFAULT_SETTINGS_WIDTH = 420
 DEFAULT_SETTINGS_HEIGHT = 270
-POSE_NAMES = ("idle", "head-tilt", "head-stretch", "cheer")
-GESTURE_POSES = ("head-tilt", "head-stretch", "cheer")
-CLICK_POSES = ("head-tilt", "head-stretch", "cheer")
+POSE_NAMES = ("idle", "head-tilt", "head-stretch", "cheer", "wave")
+GESTURE_POSES = ("head-tilt", "head-stretch", "cheer", "wave")
+CLICK_POSES = ("head-tilt", "head-stretch", "cheer", "wave")
 STAND_FRAME_MS = 80
 POSE_FRAME_MS = {
     "idle": 1000,
     "head-tilt": 220,
     "head-stretch": 180,
-    "cheer": 170,
+    "cheer": 190,
+    "wave": 190,
 }
 POSE_FRAME_COUNTS = {
     "idle": 6,
     "head-tilt": 7,
     "head-stretch": 7,
-    "cheer": 8,
+    "cheer": 7,
+    "wave": 7,
 }
 RUNNING_JUMP_SCALE = 0.4
 
@@ -1523,10 +1525,22 @@ class PetWindow:
         if self.dragged:
             return "break"
         self._cancel_single_click()
-        self._log("double-click toggle dsh window")
+        restore_bubble = self._bubble_should_restore()
+        self._log(
+            "double-click toggle dsh window"
+            f" restore_bubble={restore_bubble}"
+        )
         self.dragged = True
         self._toggle_dsh_window()
+        if restore_bubble:
+            self.bubble.restore()
         return "break"
+
+    def _bubble_should_restore(self) -> bool:
+        """Restore a collapsed task bubble only while the task is active."""
+        if not self.bubble.collapsed or not self.bubble.visible:
+            return False
+        return self.status in ("running", "waiting", "failed", "review")
 
     def _on_right_click(self, event):
         if self.menu is not None:

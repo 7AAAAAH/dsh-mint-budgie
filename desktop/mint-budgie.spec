@@ -3,10 +3,11 @@
 from pathlib import Path
 
 
-project = Path(SPECPATH).parent
+project = Path(SPECPATH).resolve().parent
+desktop = project / "desktop"
 
 a = Analysis(
-    [str(project / "desktop" / "pet-window.pyw")],
+    [str(desktop / "pet-window.pyw")],
     pathex=[str(project)],
     binaries=[],
     datas=[

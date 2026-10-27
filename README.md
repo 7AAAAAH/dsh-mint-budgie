@@ -9,14 +9,18 @@ English | [简体中文](README.zh.md)
 ## Features
 
 - Drag the pet across every monitor on the Windows virtual desktop.
-- Single-click or double-click to play the supplied head-tilt pose.
-- Double-click restores the task bubble and opens or focuses dsh.
+- Single-click plays one random gesture: head tilt, head stretch, spread
+  wings or side-wing wave. Every gesture starts and ends in the standing pose.
+- Gesture frames normalize the apparent head scale while allowing each pose
+  to keep its own position and perspective.
+- Double-click opens or hides the dsh window. If an active task bubble is
+  minimized, the same double-click restores it.
 - Right-click for settings or to hide the pet.
 - Size and opacity support sliders, numeric input and reset; both persist.
 - The Codex-style task bubble stays fixed at 284x65 and scrolls long activity
   text horizontally. Idle shows no bubble and no "idle" label.
-- Torso and feet stay on one baseline across animation frames, so gestures do
-  not make the bird jump in size.
+- Wing gestures use the complete supplied source drawing. The generator never
+  cuts out or rotates individual wings, so faces and torsos stay intact.
 
 ## Status mapping
 
