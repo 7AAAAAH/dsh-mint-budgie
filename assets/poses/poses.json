@@ -18,5 +18,15 @@
     "name": "wave",
     "file": "poses/wave.png",
     "scale": 0.0932
+  },
+  {
+    "name": "head-tilt",
+    "file": "poses/head-tilt_1.png",
+    "scale": 0.0944
+  },
+  {
+    "name": "head-stretch",
+    "file": "poses/head-stretch_3.png",
+    "scale": 0.0944
   }
 ]

@@ -33,19 +33,21 @@ MIN_SETTINGS_WIDTH = 320
 MIN_SETTINGS_HEIGHT = 230
 DEFAULT_SETTINGS_WIDTH = 420
 DEFAULT_SETTINGS_HEIGHT = 270
-POSE_NAMES = ("idle", "head-tilt", "head-stretch")
-GESTURE_POSES = ("head-tilt", "head-stretch")
-CLICK_POSES = ("head-tilt", "head-stretch")
+POSE_NAMES = ("idle", "head-tilt", "head-stretch", "cheer")
+GESTURE_POSES = ("head-tilt", "head-stretch", "cheer")
+CLICK_POSES = ("head-tilt", "head-stretch", "cheer")
 STAND_FRAME_MS = 80
 POSE_FRAME_MS = {
     "idle": 1000,
     "head-tilt": 220,
     "head-stretch": 180,
+    "cheer": 170,
 }
 POSE_FRAME_COUNTS = {
     "idle": 6,
     "head-tilt": 7,
     "head-stretch": 7,
+    "cheer": 8,
 }
 RUNNING_JUMP_SCALE = 0.4
 
@@ -101,6 +103,7 @@ BUBBLE_HEIGHT = 65
 BUBBLE_RADIUS = 18
 BUBBLE_OPACITY = 0.88
 MARQUEE_STEP_MS = 38
+OVERLAY_HEALTH_CHECK_MS = 2000
 
 FONT_CANDIDATES = [
     r"C:\Windows\Fonts\msyh.ttc",
@@ -459,6 +462,72 @@ def enable_dpi_awareness():
             pass
 
 
+def reassert_overlay(window: tk.Misc, redraw: bool = True) -> bool:
+    """Recover a Tk overlay that Windows stopped compositing.
+
+    ``overrideredirect`` + ``-topmost`` windows can keep WS_EX_TOPMOST while
+    DWM temporarily stops presenting their pixels, especially after a
+    full-screen app or display change. Re-applying topmost without activation
+    makes the compositor present the already-correct Tk surface again.
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        window.update_idletasks()
+        client_hwnd = int(window.winfo_id())
+        if not window.winfo_ismapped():
+            return False
+    except (tk.TclError, ValueError, TypeError):
+        return False
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.GetAncestor.argtypes = [wintypes.HWND, ctypes.c_uint]
+    user32.GetAncestor.restype = wintypes.HWND
+    user32.SetWindowPos.argtypes = [
+        wintypes.HWND,
+        wintypes.HWND,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_uint,
+    ]
+    user32.SetWindowPos.restype = wintypes.BOOL
+    hwnd = user32.GetAncestor(client_hwnd, 2) or client_hwnd  # GA_ROOT
+    flags = (
+        0x0001  # SWP_NOSIZE
+        | 0x0002  # SWP_NOMOVE
+        | 0x0010  # SWP_NOACTIVATE
+        | 0x0040  # SWP_SHOWWINDOW
+        | 0x0200  # SWP_NOOWNERZORDER
+    )
+    if not user32.SetWindowPos(
+        hwnd,
+        wintypes.HWND(-1),
+        0,
+        0,
+        0,
+        0,
+        flags,
+    ):
+        return False
+    if redraw:
+        user32.RedrawWindow.argtypes = [
+            wintypes.HWND,
+            ctypes.c_void_p,
+            wintypes.HBRUSH,
+            ctypes.c_uint,
+        ]
+        user32.RedrawWindow.restype = wintypes.BOOL
+        user32.RedrawWindow(
+            hwnd,
+            None,
+            None,
+            0x0001 | 0x0004 | 0x0080 | 0x0100,
+        )  # INVALIDATE | UPDATENOW | ALLCHILDREN | FRAME
+    return True
+
+
 class StatusBubble:
     """Separate translucent rounded task bubble above the pet."""
 
@@ -520,6 +589,7 @@ class StatusBubble:
         self.window.deiconify()
         self.window.lift()
         self.place()
+        reassert_overlay(self.window)
         self._start_marquee()
 
     def toggle_collapsed(self):
@@ -533,6 +603,7 @@ class StatusBubble:
         self.window.deiconify()
         self.window.lift()
         self.place()
+        reassert_overlay(self.window)
         self._start_marquee()
 
     def minimize(self):
@@ -1078,6 +1149,7 @@ class PetWindow:
         self.gesture_after_job = None
         self.last_click_pose = None
         self.single_click_job = None
+        self.overlay_health_job = None
         self.frame = 0
         self.drag_origin = None
         self.window_origin = None
@@ -1148,6 +1220,7 @@ class PetWindow:
         self.root.geometry(self._initial_geometry(width, height))
         self.root.after(120, self._tick_state)
         self.root.after(60, self._tick_animation)
+        self.root.after(600, self._maintain_overlay)
 
     def _load_settings(self) -> tuple[int, int]:
         if not self.settings_path or not self.settings_path.exists():
@@ -1286,6 +1359,7 @@ class PetWindow:
         self.canvas.configure(width=width, height=height)
         self._render_frame()
         self.root.after_idle(self.bubble.place)
+        self.root.after_idle(lambda: reassert_overlay(self.root))
         self._save_settings()
 
     def set_opacity_percent(self, percent: int):
@@ -1700,6 +1774,12 @@ class PetWindow:
             self.hidden_path.write_text("", "utf-8")
         except OSError:
             pass
+        if self.overlay_health_job is not None:
+            try:
+                self.root.after_cancel(self.overlay_health_job)
+            except tk.TclError:
+                pass
+            self.overlay_health_job = None
         if self.menu is not None:
             self.menu.close()
         if self.settings_window is not None:
@@ -1742,7 +1822,26 @@ class PetWindow:
                 self.frame = 0
             self.bubble.update(visible_status, self.task, activity)
             self._render_frame()
+            reassert_overlay(self.root)
         self.root.after(120, self._tick_state)
+
+    def _maintain_overlay(self):
+        """Keep desktop windows visible without taking focus from the user."""
+        reassert_overlay(self.root)
+        if (
+            self.bubble.visible
+            and not self.bubble.collapsed
+            and self.bubble.window.winfo_ismapped()
+        ):
+            reassert_overlay(self.bubble.window)
+        if self.menu is not None:
+            reassert_overlay(self.menu.window, redraw=False)
+        if self.settings_window is not None:
+            reassert_overlay(self.settings_window.window, redraw=False)
+        self.overlay_health_job = self.root.after(
+            OVERLAY_HEALTH_CHECK_MS,
+            self._maintain_overlay,
+        )
 
     def _tick_animation(self):
         if self.pose in GESTURE_POSES and self.pose in self.poses:
