@@ -36,11 +36,13 @@ WING_POSES = {
     "cheer": "cheer.png",
     "wave": "wave.png",
 }
+STRETCH_POSE = "stretch.png"
 
 # Each source uses a different perspective. These factors normalize the
 # apparent head size while scaling the complete drawing uniformly.
 HEAD_SCALES = {
     "head-tilt": 0.993,
+    "head-stretch": 0.862,
     "cheer": 1.823,
     "wave": 1.065,
 }
@@ -107,41 +109,6 @@ def whole_pose_cell(name: str, scale: float = 1.0) -> Image.Image:
     return scaled_pose_cell(source, scale, name)
 
 
-def isolated_head_variant(base: Image.Image, dy: int) -> Image.Image:
-    """Move only the upper head on an unchanged lower body."""
-    region = Image.new("RGBA", CELL_SIZE, (0, 0, 0, 0))
-    region.alpha_composite(base, (0, 0))
-    mask = Image.new("L", CELL_SIZE, 0)
-    mask_pixels = mask.load()
-    for y in range(0, 111):
-        for x in range(25, 165):
-            mask_pixels[x, y] = 255
-    region.putalpha(
-        Image.composite(
-            base.getchannel("A"),
-            Image.new("L", CELL_SIZE, 0),
-            mask,
-        )
-    )
-
-    moved = Image.new("RGBA", CELL_SIZE, (0, 0, 0, 0))
-    moved.alpha_composite(region, (0, dy))
-    body = base.copy()
-    body_mask = Image.new("L", CELL_SIZE, 0)
-    body_pixels = body_mask.load()
-    for y in range(111, CELL_SIZE[1]):
-        for x in range(CELL_SIZE[0]):
-            body_pixels[x, y] = 255
-    body.putalpha(
-        Image.composite(
-            base.getchannel("A"),
-            Image.new("L", CELL_SIZE, 0),
-            body_mask,
-        )
-    )
-    return Image.alpha_composite(body, moved)
-
-
 def generate_pose(name: str, frames: list[Image.Image]) -> None:
     for stale in POSE_ROOT.glob(f"{name}_*.png"):
         stale.unlink()
@@ -169,8 +136,12 @@ def generate_gestures() -> None:
     generate_pose(
         "head-stretch",
         [
-            pose_cell(isolated_head_variant(standing, dy), f"stretch-{dy}")
-            for dy in (0, 2, 4, 6, 4, 2, 0)
+            standing_pose,
+            *(
+                [whole_pose_cell(STRETCH_POSE, HEAD_SCALES["head-stretch"])]
+                * 5
+            ),
+            standing_pose,
         ],
     )
     for name, source in WING_POSES.items():
