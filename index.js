@@ -53,9 +53,8 @@ const PLUGIN_DIR = dirname(fileURLToPath(import.meta.url))
 const DESKTOP_DIR = join(PLUGIN_DIR, 'desktop')
 const DESKTOP_STATE_PATH = join(DESKTOP_DIR, 'state.json')
 const DESKTOP_POSITION_PATH = join(DESKTOP_DIR, 'position.json')
-const DESKTOP_SETTINGS_PATH = join(DESKTOP_DIR, 'settings.json')
+const DESKTOP_DEFAULT_SETTINGS_PATH = join(DESKTOP_DIR, 'default-settings.json')
 const DESKTOP_SCRIPT = join(DESKTOP_DIR, 'pet-window.pyw')
-const DESKTOP_EXE = join(DESKTOP_DIR, 'mint-budgie.exe')
 const DESKTOP_SPRITE = join(PLUGIN_DIR, 'assets', 'spritesheet.png')
 const DESKTOP_PROCESS_PATH = join(DESKTOP_DIR, 'pet.pid')
 const DESKTOP_DSH_PID_PATH = join(DESKTOP_DIR, 'dsh.pid')
@@ -311,14 +310,43 @@ function createDesktopPet(ctx) {
   let launchPending = false
   const LAUNCH_LOG = join(DESKTOP_DIR, 'launch.log')
 
+  function resolveDesktopExecutable() {
+    try {
+      const versioned = readdirSync(DESKTOP_DIR, { withFileTypes: true })
+        .filter((entry) => entry.isFile())
+        .map((entry) => {
+          const match = entry.name.match(/^mint-budgie-(\d+)\.(\d+)\.(\d+)\.exe$/i)
+          if (!match) return null
+          return {
+            path: join(DESKTOP_DIR, entry.name),
+            version: match.slice(1).map(Number),
+          }
+        })
+        .filter(Boolean)
+        .sort((left, right) => {
+          for (let index = 0; index < 3; index += 1) {
+            if (left.version[index] !== right.version[index]) {
+              return right.version[index] - left.version[index]
+            }
+          }
+          return 0
+        })
+      if (versioned.length > 0) return versioned[0].path
+    } catch {
+      // Fall through to the legacy single executable.
+    }
+    const legacy = join(DESKTOP_DIR, 'mint-budgie.exe')
+    return existsSync(legacy) ? legacy : null
+  }
+
   function seedUserFiles() {
     try {
       mkdirSync(USER_DATA_DIR, { recursive: true })
       if (!existsSync(USER_POSITION_PATH) && existsSync(DESKTOP_POSITION_PATH)) {
         copyFileSync(DESKTOP_POSITION_PATH, USER_POSITION_PATH)
       }
-      if (!existsSync(USER_SETTINGS_PATH) && existsSync(DESKTOP_SETTINGS_PATH)) {
-        copyFileSync(DESKTOP_SETTINGS_PATH, USER_SETTINGS_PATH)
+      if (!existsSync(USER_SETTINGS_PATH) && existsSync(DESKTOP_DEFAULT_SETTINGS_PATH)) {
+        copyFileSync(DESKTOP_DEFAULT_SETTINGS_PATH, USER_SETTINGS_PATH)
       }
     } catch {
       // The packaged defaults remain usable if the migration fails.
@@ -407,16 +435,17 @@ function createDesktopPet(ctx) {
     // Retry at most every 10s: a window that cannot start must not spin the Host.
     if (Date.now() - lastLaunchAt < 10000) return
     lastLaunchAt = Date.now()
-    const hasLauncher = existsSync(DESKTOP_EXE) || existsSync(DESKTOP_SCRIPT)
+    const desktopExe = resolveDesktopExecutable()
+    const hasLauncher = desktopExe !== null || existsSync(DESKTOP_SCRIPT)
     if (!hasLauncher || !existsSync(DESKTOP_SPRITE)) {
-      log(`launch skipped: exe=${existsSync(DESKTOP_EXE)} script=${existsSync(DESKTOP_SCRIPT)} sprite=${existsSync(DESKTOP_SPRITE)}`)
+      log(`launch skipped: exe=${desktopExe !== null} script=${existsSync(DESKTOP_SCRIPT)} sprite=${existsSync(DESKTOP_SPRITE)}`)
       return
     }
 
     launchPending = true
     try {
       seedUserFiles()
-      if (existsSync(DESKTOP_EXE)) {
+      if (desktopExe) {
         const args = [
           '--sprite', DESKTOP_SPRITE,
           '--state', USER_STATE_PATH,
@@ -429,14 +458,14 @@ function createDesktopPet(ctx) {
           try { writeFileSync(LAUNCH_LOG, '') } catch { /* optional */ }
         }
         const out = openSync(LAUNCH_LOG, 'a')
-        const spawned = spawn(DESKTOP_EXE, args, {
+        const spawned = spawn(desktopExe, args, {
           stdio: ['ignore', out, out],
           detached: true,
           windowsHide: true,
         })
         closeSync(out)
         spawned.unref()
-        log(`spawn desktop exe pid=${spawned.pid ?? 'none'}`)
+        log(`spawn desktop exe=${desktopExe} pid=${spawned.pid ?? 'none'}`)
         if (spawned.pid) {
           try { writeFileSync(DESKTOP_PROCESS_PATH, String(spawned.pid)) } catch { /* optional */ }
         }

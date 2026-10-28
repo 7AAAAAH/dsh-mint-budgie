@@ -1,14 +1,17 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 from pathlib import Path
+import json
 
 
 project = Path(SPECPATH).resolve().parent
 desktop = project / "desktop"
+package = json.loads((project / "package.json").read_text(encoding="utf-8"))
+exe_name = f"mint-budgie-{package['version']}"
 
 a = Analysis(
     [str(desktop / "pet-window.pyw")],
-    pathex=[str(project)],
+    pathex=[str(project), str(desktop)],
     binaries=[],
     datas=[
         (
@@ -33,7 +36,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name="mint-budgie",
+    name=exe_name,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

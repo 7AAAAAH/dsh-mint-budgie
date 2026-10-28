@@ -14,10 +14,24 @@ from pathlib import Path
 import random
 import subprocess
 import sys
+import time
 
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
 import tkinter as tk
+
+from pet_physics import (
+    BodyGeometry,
+    DragTracker,
+    Rect,
+    ThrowBody,
+    clamp_window_to_monitor,
+    landing_scale,
+    landing_strength as landing_strength_for_impact,
+    monitor_index_at_point,
+    monitor_index_for_rect,
+    step_throw,
+)
 
 
 CELL_W = 192
@@ -115,6 +129,11 @@ BUBBLE_OPACITY = 0.88
 BUBBLE_EDGE_MARGIN = 8
 MARQUEE_STEP_MS = 38
 OVERLAY_HEALTH_CHECK_MS = 2000
+PHYSICS_FRAME_MS = 16
+DRAG_THRESHOLD_PX = 5
+DRAG_THROW_POWER = 1.0
+LANDING_DURATION_MS = 220
+LANDING_FRAME_MS = 33
 
 FONT_CANDIDATES = [
     r"C:\Windows\Fonts\msyh.ttc",
@@ -572,6 +591,7 @@ class StatusBubble:
         self.activity_width = 0
         self.visible = False
         self.collapsed = False
+        self.motion_hidden = False
         self.minimize_pressed = False
         self.scroll_offset = 0
         self.marquee_job = None
@@ -591,7 +611,7 @@ class StatusBubble:
         self.task = task.strip()
         self.activity = activity.strip()
         self.visible = status in ("running", "waiting", "failed", "review")
-        if not self.visible or self.collapsed:
+        if not self.visible or self.collapsed or self.motion_hidden:
             self._stop_marquee()
             self.window.withdraw()
             return
@@ -605,7 +625,7 @@ class StatusBubble:
 
     def toggle_collapsed(self):
         self.collapsed = not self.collapsed
-        if self.collapsed or not self.visible:
+        if self.collapsed or not self.visible or self.motion_hidden:
             self._stop_marquee()
             self.window.withdraw()
             return
@@ -629,6 +649,21 @@ class StatusBubble:
     def restore(self):
         if self.collapsed:
             self.toggle_collapsed()
+
+    def set_motion_hidden(self, hidden: bool):
+        if hidden == self.motion_hidden:
+            return
+        self.motion_hidden = hidden
+        if hidden or not self.visible or self.collapsed:
+            self._stop_marquee()
+            self.window.withdraw()
+            return
+        self._render()
+        self.window.deiconify()
+        self.window.lift()
+        self.place()
+        reassert_overlay(self.window)
+        self._start_marquee()
 
     def _render(self):
         probe = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
@@ -754,7 +789,12 @@ class StatusBubble:
 
     def _start_marquee(self):
         self._stop_marquee()
-        if self.visible and self.activity_width > BUBBLE_WIDTH - 46:
+        if (
+            self.visible
+            and not self.collapsed
+            and not self.motion_hidden
+            and self.activity_width > BUBBLE_WIDTH - 46
+        ):
             self.marquee_job = self.window.after(
                 MARQUEE_STEP_MS,
                 self._advance_marquee,
@@ -762,7 +802,7 @@ class StatusBubble:
 
     def _advance_marquee(self):
         self.marquee_job = None
-        if not self.visible:
+        if not self.visible or self.collapsed or self.motion_hidden:
             return
         cycle = self.activity_width + 42
         self.scroll_offset = (self.scroll_offset + 1) % max(1, cycle)
@@ -781,7 +821,7 @@ class StatusBubble:
             self.marquee_job = None
 
     def place(self):
-        if not self.visible:
+        if not self.visible or self.collapsed or self.motion_hidden:
             return
         try:
             self.window.update_idletasks()
@@ -1188,9 +1228,18 @@ class PetWindow:
         self.idle_gesture_job = None
         self.single_click_job = None
         self.overlay_health_job = None
+        self.physics_after_job = None
+        self.physics_body = None
+        self.physics_last_tick = None
+        self.physics_work_areas = []
+        self.landing_after_job = None
+        self.landing_started = None
+        self.landing_strength = 0.0
         self.frame = 0
-        self.drag_origin = None
-        self.window_origin = None
+        self.drag_tracker = DragTracker(threshold=DRAG_THRESHOLD_PX)
+        self.drag_work_areas = []
+        self.drag_position = None
+        self.monitor_index = 0
         self.dragged = False
         self.anchor_pid = 0
         self.dsh_pid_path = state_path.with_name("dsh.pid")
@@ -1225,6 +1274,7 @@ class PetWindow:
                 bbox = self._pose_cell(frame).getchannel("A").getbbox()
                 if bbox:
                     self.pose_top = min(self.pose_top, bbox[1])
+        self.pose_bounds = self._measure_pose_bounds()
         self.root = tk.Tk()
         self.root.title("Mint Budgie")
         self.root.overrideredirect(True)
@@ -1315,8 +1365,20 @@ class PetWindow:
     def _initial_geometry(self, width: int, height: int) -> str:
         saved = self._load_position()
         left, top = saved or self._default_position(width, height)
-        left, top = self._clamp_to_screen(left, top, width, height)
-        return f"{width}x{height}+{left}+{top}"
+        areas = self._work_area_rects()
+        geometry = self._body_geometry()
+        self.monitor_index = monitor_index_for_rect(
+            geometry.bounds_at(left, top),
+            areas,
+            self.monitor_index,
+        )
+        left, top = clamp_window_to_monitor(
+            left,
+            top,
+            geometry,
+            areas[self.monitor_index],
+        )
+        return f"{width}x{height}+{round(left)}+{round(top)}"
 
     def _default_position(self, width: int, height: int):
         left, top, right, bottom = self.virtual_desktop()
@@ -1430,6 +1492,13 @@ class PetWindow:
 
         return max(work_areas, key=overlap)
 
+    @classmethod
+    def _work_area_rects(cls):
+        raw_areas = cls.monitor_work_areas()
+        if not raw_areas:
+            raw_areas = [cls.virtual_desktop()]
+        return [Rect(*area) for area in raw_areas]
+
     def _clamp_to_screen(self, left: int, top: int, width: int, height: int):
         work_left, work_top, work_right, work_bottom = self._work_area_for_rect(
             left,
@@ -1459,6 +1528,24 @@ class PetWindow:
         margin = 8
         return self._display_width() + margin * 2, self._display_height() + margin * 2
 
+    def _body_geometry(self) -> BodyGeometry:
+        width, _ = self._window_size()
+        display_w = self._display_width()
+        display_h = self._display_height()
+        scale_x = display_w / POSE_CELL_W
+        scale_y = display_h / POSE_CELL_H
+        origin_x = (width - display_w) // 2
+        origin_y = self._sprite_top()
+        left, top, right, bottom = self.pose_bounds
+        # _pose_cell lifts frames that overshoot the shared foot line, so this
+        # visible bottom is also the exact floor contact used by physics.
+        return BodyGeometry(
+            origin_x + left * scale_x,
+            origin_y + top * scale_y,
+            origin_x + right * scale_x,
+            origin_y + bottom * scale_y,
+        )
+
     def _bubble_anchor_top(self) -> int:
         """Keep the task bubble just above the tallest possible pose."""
         scale = self._display_height() / POSE_CELL_H
@@ -1484,6 +1571,19 @@ class PetWindow:
             top = (POSE_BASELINE - SHEET_BASELINE) + bbox[1]
             canvas = Image.new("RGBA", (POSE_CELL_W, POSE_CELL_H), (0, 0, 0, 0))
             canvas.alpha_composite(content, (left, top))
+            placed_bbox = canvas.getchannel("A").getbbox()
+            if placed_bbox and placed_bbox[3] > POSE_BASELINE:
+                # Keep rare source frames from hanging below the shared floor.
+                lifted = Image.new(
+                    "RGBA",
+                    (POSE_CELL_W, POSE_CELL_H),
+                    (0, 0, 0, 0),
+                )
+                lifted.alpha_composite(
+                    canvas,
+                    (0, POSE_BASELINE - placed_bbox[3]),
+                )
+                return lifted
             return canvas
         max_width = POSE_CELL_W - POSE_PADDING * 2
         max_height = POSE_BASELINE - POSE_PADDING
@@ -1501,6 +1601,33 @@ class PetWindow:
         top = POSE_BASELINE - content.height
         canvas.alpha_composite(content, (left, top))
         return canvas
+
+    def _measure_pose_bounds(self):
+        """Measure every rendered pose so no transparent edge is treated as body."""
+        boxes = []
+        for row_index, (_, frame_count) in enumerate(ROWS):
+            for frame_index in range(frame_count):
+                left = frame_index * CELL_W
+                top = row_index * CELL_H
+                cell = self.sheet.crop(
+                    (left, top, left + CELL_W, top + CELL_H)
+                )
+                bbox = self._pose_cell(cell).getchannel("A").getbbox()
+                if bbox:
+                    boxes.append(bbox)
+        for pose_name in GESTURE_POSES:
+            for frame in self.poses.get(pose_name, ()):
+                bbox = self._pose_cell(frame).getchannel("A").getbbox()
+                if bbox:
+                    boxes.append(bbox)
+        if not boxes:
+            return (POSE_PADDING, POSE_PADDING, POSE_CELL_W, POSE_BASELINE)
+        return (
+            min(box[0] for box in boxes),
+            min(box[1] for box in boxes),
+            max(box[2] for box in boxes),
+            max(box[3] for box in boxes),
+        )
 
     def _scaled_running_jump(self, cell: Image.Image) -> Image.Image:
         """Keep the work bob, but reduce its vertical travel to 40%."""
@@ -1524,6 +1651,7 @@ class PetWindow:
         percent = clamp(round(percent), MIN_SIZE_PERCENT, MAX_SIZE_PERCENT)
         if percent == self.size_percent:
             return
+        self._cancel_physics(save_position=False)
         old_w = max(1, self.root.winfo_width())
         old_h = max(1, self.root.winfo_height())
         old_x = self.root.winfo_x()
@@ -1535,7 +1663,20 @@ class PetWindow:
         width, height = self._window_size()
         left = round(center_x - width / 2)
         top = bottom - height
-        left, top = self._clamp_to_screen(left, top, width, height)
+        areas = self._work_area_rects()
+        geometry = self._body_geometry()
+        self.monitor_index = monitor_index_for_rect(
+            geometry.bounds_at(left, top),
+            areas,
+            self.monitor_index,
+        )
+        left, top = clamp_window_to_monitor(
+            left,
+            top,
+            geometry,
+            areas[self.monitor_index],
+        )
+        left, top = round(left), round(top)
         self.root.geometry(f"{width}x{height}+{left}+{top}")
         self.canvas.configure(width=width, height=height)
         self._render_frame()
@@ -1574,41 +1715,233 @@ class PetWindow:
         )
         if self.menu is not None:
             self.menu.close()
-        self.drag_origin = (event.x_root, event.y_root)
-        self.window_origin = (self.root.winfo_x(), self.root.winfo_y())
+        self._cancel_physics(save_position=True)
+        self.drag_work_areas = self._work_area_rects()
+        self.monitor_index = monitor_index_for_rect(
+            self._body_geometry().bounds_at(
+                self.root.winfo_x(),
+                self.root.winfo_y(),
+            ),
+            self.drag_work_areas,
+            self.monitor_index,
+        )
+        self.drag_tracker.press(
+            event.x_root,
+            event.y_root,
+            self.root.winfo_x(),
+            self.root.winfo_y(),
+            time.perf_counter(),
+        )
+        self.drag_position = (self.root.winfo_x(), self.root.winfo_y())
         self.dragged = False
 
-    def _on_drag(self, event):
-        if not self.drag_origin or not self.window_origin:
-            return
-        dx = event.x_root - self.drag_origin[0]
-        dy = event.y_root - self.drag_origin[1]
-        if abs(dx) >= 4 or abs(dy) >= 4:
-            self.dragged = True
-        width, height = self._window_size()
-        left, top = self._clamp_to_screen(
-            self.window_origin[0] + dx,
-            self.window_origin[1] + dy,
-            width,
-            height,
+    def _move_drag_to(self, pointer_x: float, pointer_y: float) -> bool:
+        dragged = self.drag_tracker.move(
+            pointer_x,
+            pointer_y,
+            time.perf_counter(),
         )
-        self.root.geometry(f"+{left}+{top}")
+        self.dragged = self.dragged or dragged
+        if not dragged or not self.drag_work_areas:
+            return dragged
+        position = self.drag_tracker.window_position(pointer_x, pointer_y)
+        if position is None:
+            return dragged
+        self.monitor_index = monitor_index_at_point(
+            self.drag_work_areas,
+            pointer_x,
+            pointer_y,
+            self.monitor_index,
+        )
+        left, top = clamp_window_to_monitor(
+            position[0],
+            position[1],
+            self._body_geometry(),
+            self.drag_work_areas[self.monitor_index],
+        )
+        left, top = round(left), round(top)
+        self.drag_position = (left, top)
+        if left != self.root.winfo_x() or top != self.root.winfo_y():
+            self.root.geometry(f"+{left}+{top}")
+        return dragged
 
-    def _on_release(self, _event):
-        self.drag_origin = None
-        self.window_origin = None
-        self._log(
-            f"pet release dragged={self.dragged} status={self.status} "
-            f"pose={self.pose} frame={self.frame}"
+    def _on_drag(self, event):
+        self._move_drag_to(event.x_root, event.y_root)
+
+    def _on_release(self, event):
+        self._move_drag_to(event.x_root, event.y_root)
+        release = self.drag_tracker.release(
+            event.x_root,
+            event.y_root,
+            time.perf_counter(),
+            DRAG_THROW_POWER,
         )
-        if not self.dragged:
+        self.drag_work_areas = []
+        self._log(
+            f"pet release dragged={release.dragged} "
+            f"velocity={0 if release.velocity is None else round(release.velocity.speed)} "
+            f"status={self.status} pose={self.pose} frame={self.frame}"
+        )
+        drag_position = self.drag_position or (
+            self.root.winfo_x(),
+            self.root.winfo_y(),
+        )
+        self.drag_position = None
+        if not release.dragged:
+            if self.dragged:
+                return
             self._schedule_single_click()
-        elif self.position_path:
-            payload = {"left": self.root.winfo_x(), "top": self.root.winfo_y()}
+            return
+
+        self.dragged = True
+        velocity = release.velocity
+        self._start_physics(
+            drag_position[0],
+            drag_position[1],
+            0.0 if velocity is None else velocity.vx,
+            0.0 if velocity is None else velocity.vy,
+        )
+
+    def _start_physics(self, left: float, top: float, vx: float, vy: float):
+        self._cancel_physics(save_position=False)
+        self.physics_work_areas = self._work_area_rects()
+        self.monitor_index = monitor_index_for_rect(
+            self._body_geometry().bounds_at(left, top),
+            self.physics_work_areas,
+            self.monitor_index,
+        )
+        self.physics_body = ThrowBody(
+            float(left),
+            float(top),
+            float(vx),
+            float(vy),
+            self.monitor_index,
+        )
+        self.physics_last_tick = time.perf_counter()
+        self.bubble.set_motion_hidden(True)
+        self._log(
+            f"physics start x={left} y={top} "
+            f"vx={round(vx)} vy={round(vy)} monitor={self.monitor_index}"
+        )
+        self.physics_after_job = self.root.after(
+            PHYSICS_FRAME_MS,
+            self._tick_physics,
+        )
+
+    def _start_landing(self, impact_speed: float):
+        self._cancel_landing(redraw=False)
+        self.landing_started = time.perf_counter()
+        self.landing_strength = landing_strength_for_impact(impact_speed)
+        self._render_frame()
+        self.landing_after_job = self.root.after(
+            LANDING_FRAME_MS,
+            self._tick_landing,
+        )
+
+    def _tick_landing(self):
+        self.landing_after_job = None
+        if self.landing_started is None:
+            return
+        elapsed = time.perf_counter() - self.landing_started
+        if elapsed * 1000 >= LANDING_DURATION_MS:
+            self._cancel_landing(redraw=True)
+            return
+        self._render_frame()
+        self.landing_after_job = self.root.after(
+            LANDING_FRAME_MS,
+            self._tick_landing,
+        )
+
+    def _cancel_landing(self, redraw: bool):
+        if self.landing_after_job is not None:
             try:
-                self.position_path.write_text(json.dumps(payload), "utf-8")
-            except OSError:
+                self.root.after_cancel(self.landing_after_job)
+            except tk.TclError:
                 pass
+            self.landing_after_job = None
+        active = self.landing_started is not None
+        self.landing_started = None
+        self.landing_strength = 0.0
+        if redraw and active:
+            self._render_frame()
+
+    def _tick_physics(self):
+        self.physics_after_job = None
+        if self.physics_body is None:
+            return
+        now = time.perf_counter()
+        delta = now - (self.physics_last_tick or now)
+        self.physics_last_tick = now
+        result = step_throw(
+            self.physics_body,
+            delta,
+            self._body_geometry(),
+            self.physics_work_areas,
+        )
+        self.physics_body = result.body
+        self.monitor_index = result.body.monitor_index
+        left = round(result.body.x)
+        top = round(result.body.y)
+        if left != self.root.winfo_x() or top != self.root.winfo_y():
+            self.root.geometry(f"+{left}+{top}")
+        if result.landed:
+            self._log(
+                f"physics landed impact={round(result.impact_speed)} "
+                f"x={left} y={top} monitor={self.monitor_index}"
+            )
+            self._start_landing(result.impact_speed)
+        if result.at_rest:
+            self._finish_physics()
+            return
+        self.physics_after_job = self.root.after(
+            PHYSICS_FRAME_MS,
+            self._tick_physics,
+        )
+
+    def _finish_physics(self):
+        body = self.physics_body
+        self.physics_body = None
+        self.physics_last_tick = None
+        self.physics_work_areas = []
+        if body is not None:
+            left, top = round(body.x), round(body.y)
+            self.root.geometry(f"+{left}+{top}")
+        if body is not None:
+            self._save_position(round(body.x), round(body.y))
+        else:
+            self._save_position()
+        self.bubble.set_motion_hidden(False)
+        self._log("physics rest")
+
+    def _cancel_physics(self, save_position: bool):
+        self._cancel_landing(redraw=True)
+        if self.physics_after_job is not None:
+            try:
+                self.root.after_cancel(self.physics_after_job)
+            except tk.TclError:
+                pass
+            self.physics_after_job = None
+        body = self.physics_body
+        self.physics_body = None
+        self.physics_last_tick = None
+        self.physics_work_areas = []
+        if body is not None and save_position:
+            left, top = round(body.x), round(body.y)
+            self.root.geometry(f"+{left}+{top}")
+            self._save_position(left, top)
+        self.bubble.set_motion_hidden(False)
+
+    def _save_position(self, left=None, top=None):
+        if not self.position_path:
+            return
+        payload = {
+            "left": self.root.winfo_x() if left is None else left,
+            "top": self.root.winfo_y() if top is None else top,
+        }
+        try:
+            self.position_path.write_text(json.dumps(payload), "utf-8")
+        except OSError:
+            pass
 
     def _schedule_single_click(self):
         self._cancel_single_click()
@@ -1770,6 +2103,7 @@ class PetWindow:
         return self.status in ("running", "waiting", "failed", "review")
 
     def _on_right_click(self, event):
+        self._cancel_physics(save_position=True)
         if self.menu is not None:
             self.menu.close()
         self.menu = ContextMenu(self, event.x_root, event.y_root)
@@ -2011,6 +2345,7 @@ class PetWindow:
             self.root.after(500, lambda: self._poll_dsh_focus(attempt + 1))
 
     def hide(self):
+        self._cancel_physics(save_position=True)
         try:
             self.hidden_path.write_text("", "utf-8")
         except OSError:
@@ -2112,44 +2447,77 @@ class PetWindow:
             delay = 160
         self.root.after(delay, self._tick_animation)
 
-    def _render_frame(self):
-        width, height = self._window_size()
-        display_w = self._display_width()
-        display_h = self._display_height()
+    def _current_pose_cell(self, display_w: int, display_h: int):
         if self.pose in GESTURE_POSES and self.pose in self.poses:
             frames = self.poses[self.pose]
             cell = self._pose_cell(frames[self.frame % len(frames)])
-            cell = cell.resize((display_w, display_h), Image.Resampling.NEAREST)
-            composed = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-            composed.alpha_composite(
-                cell,
-                ((width - display_w) // 2, self._sprite_top()),
+            return cell.resize(
+                (display_w, display_h),
+                Image.Resampling.NEAREST,
             )
-        elif self.status == "idle" and self.pose == "idle":
+        if self.status == "idle" and self.pose == "idle":
             # The pose folders contain edited close-up frames. The top-left
             # sheet cell is the original upright standing frame used by Codex.
             cell = self.sheet.crop((0, 0, CELL_W, CELL_H))
             cell = self._pose_cell(cell)
-            cell = cell.resize((display_w, display_h), Image.Resampling.NEAREST)
-            composed = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-            composed.alpha_composite(
-                cell,
-                ((width - display_w) // 2, self._sprite_top()),
+            return cell.resize(
+                (display_w, display_h),
+                Image.Resampling.NEAREST,
             )
-        else:
-            animation_row = "jumping" if self.row == "running" else self.row
-            row_index = ROW_INDEX.get(animation_row, 0)
-            left = self.frame * CELL_W
-            top = row_index * CELL_H
-            cell = self.sheet.crop((left, top, left + CELL_W, top + CELL_H))
-            cell = self._pose_cell(cell)
-            cell = self._scaled_running_jump(cell)
-            cell = cell.resize((display_w, display_h), Image.Resampling.NEAREST)
-            composed = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-            composed.alpha_composite(
-                cell,
-                ((width - display_w) // 2, self._sprite_top()),
-            )
+        animation_row = "jumping" if self.row == "running" else self.row
+        row_index = ROW_INDEX.get(animation_row, 0)
+        left = self.frame * CELL_W
+        top = row_index * CELL_H
+        cell = self.sheet.crop((left, top, left + CELL_W, top + CELL_H))
+        cell = self._pose_cell(cell)
+        cell = self._scaled_running_jump(cell)
+        return cell.resize(
+            (display_w, display_h),
+            Image.Resampling.NEAREST,
+        )
+
+    def _current_landing_scale(self) -> tuple[float, float]:
+        if self.landing_started is None:
+            return (1.0, 1.0)
+        elapsed = time.perf_counter() - self.landing_started
+        progress = elapsed * 1000 / LANDING_DURATION_MS
+        if progress >= 1.0:
+            return (1.0, 1.0)
+        return landing_scale(progress, self.landing_strength)
+
+    @staticmethod
+    def _squash_pose_cell(cell, scale_x: float, scale_y: float):
+        if abs(scale_x - 1.0) < 0.001 and abs(scale_y - 1.0) < 0.001:
+            return cell
+        bbox = cell.getchannel("A").getbbox()
+        if not bbox:
+            return cell
+        content = cell.crop(bbox)
+        new_w = max(1, round(content.width * scale_x))
+        new_h = max(1, round(content.height * scale_y))
+        resized = content.resize(
+            (new_w, new_h),
+            Image.Resampling.NEAREST,
+        )
+        center_x = (bbox[0] + bbox[2]) / 2
+        left = round(center_x - new_w / 2)
+        top = bbox[3] - new_h
+        canvas = Image.new("RGBA", cell.size, (0, 0, 0, 0))
+        canvas.alpha_composite(resized, (max(0, left), max(0, top)))
+        return canvas
+
+    def _render_frame(self):
+        width, height = self._window_size()
+        display_w = self._display_width()
+        display_h = self._display_height()
+        cell = self._current_pose_cell(display_w, display_h)
+        scale_x, scale_y = self._current_landing_scale()
+        cell = self._squash_pose_cell(cell, scale_x, scale_y)
+        composed = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        composed.alpha_composite(
+            cell,
+            ((width - display_w) // 2, self._sprite_top()),
+        )
         self.photo = keyed_photo(composed)
         self.canvas.configure(width=width, height=height)
         self.canvas.coords(

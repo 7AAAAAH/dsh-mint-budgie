@@ -6,12 +6,30 @@ $position = Join-Path $PSScriptRoot "position.json"
 $settings = Join-Path $PSScriptRoot "settings.json"
 $sprite = Join-Path $plugin "assets\spritesheet.png"
 $script = Join-Path $PSScriptRoot "pet-window.pyw"
-$bundledExe = Join-Path $PSScriptRoot "mint-budgie.exe"
+$bundledExe = $null
+$versionedExe = Get-ChildItem -LiteralPath $PSScriptRoot -Filter "mint-budgie-*.exe" -File -ErrorAction SilentlyContinue |
+  ForEach-Object {
+    $versionText = $_.BaseName.Substring("mint-budgie-".Length)
+    try {
+      [pscustomobject]@{ Path = $_.FullName; Version = [version]$versionText }
+    } catch {
+    }
+  } |
+  Sort-Object Version -Descending |
+  Select-Object -First 1
+if ($versionedExe) {
+  $bundledExe = $versionedExe.Path
+} else {
+  $legacyExe = Join-Path $PSScriptRoot "mint-budgie.exe"
+  if (Test-Path $legacyExe) {
+    $bundledExe = $legacyExe
+  }
+}
 $pidFile = Join-Path $PSScriptRoot "pet.pid"
 $dshPidFile = Join-Path $PSScriptRoot "dsh.pid"
 $hiddenFlag = Join-Path $PSScriptRoot "hidden.flag"
 
-if (-not (Test-Path $sprite) -or (-not (Test-Path $script) -and -not (Test-Path $bundledExe))) {
+if (-not (Test-Path $sprite) -or (-not (Test-Path $script) -and -not $bundledExe)) {
   exit 1
 }
 
@@ -54,7 +72,7 @@ $arguments = @(
   "--parent-pid", "0",
   "--anchor-pid", $(if ($dshPid) { [string]$dshPid } else { "0" })
 )
-if (Test-Path $bundledExe) {
+if ($bundledExe) {
   $executable = $bundledExe
 } else {
   $python = $null

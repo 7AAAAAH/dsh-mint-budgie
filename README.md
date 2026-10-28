@@ -9,6 +9,11 @@ English | [简体中文](README.zh.md)
 ## Features
 
 - Drag the pet across every monitor on the Windows virtual desktop.
+- Release a drag to let the pet fall naturally. A quick flick throws it with
+  bounded velocity, gravity, wall bounce, floor friction and a short
+  bottom-anchored landing squash.
+- The task bubble temporarily hides while the pet is airborne, then returns
+  after the pet settles.
 - While idle, the pet plays a random gesture every 30–75 seconds using a
   randomized delay and avoids repeating the same gesture consecutively.
 - Single-click plays one random gesture: head tilt, head stretch, spread
@@ -23,6 +28,8 @@ English | [简体中文](README.zh.md)
 - Size and opacity support sliders, numeric input and reset; both persist.
 - The Codex-style task bubble stays fixed at 284x65 and scrolls long activity
   text horizontally. Idle shows no bubble and no "idle" label.
+- Every sprite frame is aligned to one shared foot line, so the pet rests
+  directly on the work-area floor without clipping low frames.
 - Wing gestures use the complete supplied source drawing. The generator never
   cuts out or rotates individual wings, so faces and torsos stay intact.
 
@@ -52,13 +59,15 @@ but the pet process survives a Host restart. `desktop/setup-startup.ps1` can
 also install a login shortcut that launches the pet independently.
 
 The process uses a per-monitor DPI-aware context so mixed-scale monitors keep
-consistent sprite and window coordinates. The pet reads
-`desktop/settings.json`; the right-click settings panel writes back to it.
+consistent sprite and window coordinates. The pet seeds the user's AppData
+settings from `desktop/default-settings.json`; the right-click settings panel
+writes to the per-user copy so plugin upgrades do not overwrite preferences.
 
-The packaged `desktop/mint-budgie.exe` is used first, so Windows users do not
-need Python. If the executable is unavailable, Pillow and tkinter are required
-and Python is resolved from `DSH_PET_PYTHON`, then `pyw.exe`, `pythonw.exe`,
-`py.exe`, and `python.exe` on `PATH`.
+The launcher prefers the newest packaged `desktop/mint-budgie-<version>.exe`,
+so Windows users do not need Python and upgrades can coexist with a currently
+running pet. If no executable is available, Pillow and tkinter are required and
+Python is resolved from `DSH_PET_PYTHON`, then `pyw.exe`, `pythonw.exe`, `py.exe`,
+and `python.exe` on `PATH`.
 
 ## Install
 
@@ -82,6 +91,7 @@ Windows is currently the only supported platform.
 - `index.js` - Host state polling, persistence and desktop-process bridge
 - `client.js` - compatibility shim; intentionally registers no in-window pet
 - `desktop/pet-window.pyw` - standalone desktop overlay
+- `desktop/pet_physics.py` - dependency-free drag, throw, collision and landing physics
 - `assets/spritesheet.png` - working/status sheet read by the desktop overlay
 - `assets/poses/head-tilt_<frame>.png` - aligned click gesture frames
 
