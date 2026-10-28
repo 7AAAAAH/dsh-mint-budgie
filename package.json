@@ -61,7 +61,8 @@
     "icon.svg",
     "LICENSE",
     "README.md",
-    "README.zh.md"
+    "README.zh.md",
+    "docs/DEVELOPMENT-PLAN.zh.md"
   ],
   "dsh": {
     "bundle": { "patch": "./cordis.patch.yml" },

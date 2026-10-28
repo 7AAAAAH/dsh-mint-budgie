@@ -26,6 +26,12 @@ English | [简体中文](README.zh.md)
 - Wing gestures use the complete supplied source drawing. The generator never
   cuts out or rotates individual wings, so faces and torsos stay intact.
 
+## Development plan
+
+The physical drag/throw roadmap, status interactions and size-reduction plan
+are documented in [docs/DEVELOPMENT-PLAN.zh.md](docs/DEVELOPMENT-PLAN.zh.md)
+(Chinese).
+
 ## Status mapping
 
 | Source signal | Pet row | Label |
