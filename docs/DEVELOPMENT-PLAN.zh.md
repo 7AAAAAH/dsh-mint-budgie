@@ -1,8 +1,11 @@
 # Mint Budgie 桌宠开发计划
 
-状态：规划稿  
-基线版本：`0.5.13`  
-目标平台：Windows 10/11 x64  
+状态：规划稿
+
+基线版本：`0.5.13`
+
+目标平台：Windows 10/11 x64
+
 产品定位：DSH 的轻量桌面伴侣，只显示一只桌面悬浮宠物，不在 DSH 窗口内重复显示。
 
 ## 1. 产品目标
@@ -53,21 +56,29 @@
 
 公开参考：
 
-- DSH 物理辅助函数：  
+- DSH 物理辅助函数：
+
   <https://raw.githubusercontent.com/dsh-tauri/deepseek-harness-desktop/main/src/pet/hooks/use-pet-physics.helpers.ts>
-- DSH 宠物交互规范：  
+- DSH 宠物交互规范：
+
   <https://raw.githubusercontent.com/dsh-tauri/dsh-pet-component/HEAD/docs/spec/pet-interactions.md>
-- 上游参考实现：  
+- 上游参考实现：
+
   <https://github.com/PC2005-cloud/dsh-pet/tree/d73a2bb81e7891214097e061f597db35f5a9d57f/dsh-pet/src>
-- QQ 宠物公开资料（仅作交互参考）：  
+- QQ 宠物公开资料（仅作交互参考）：
+
   <https://baike.360.cn/refine/id/1021357.html>
-- Shimeji-ee：  
+- Shimeji-ee：
+
   <https://github.com/kilkakon/shimeji-ee>
-- eSheep：  
+- eSheep：
+
   <https://github.com/Adrianotiger/desktopPet>
-- Oneko：  
+- Oneko：
+
   <https://github.com/tie/oneko>
-- Desktop Goose：  
+- Desktop Goose：
+
   <https://goose.game/>
 
 ## 4. 设计原则
