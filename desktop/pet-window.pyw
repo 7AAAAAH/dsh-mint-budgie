@@ -22,6 +22,11 @@ import tkinter as tk
 
 CELL_W = 192
 CELL_H = 208
+POSE_CELL_W = 320
+POSE_CELL_H = 320
+POSE_BASELINE = 274
+POSE_PADDING = 6
+SHEET_BASELINE = 194
 DEFAULT_SCALE = 0.62
 DEFAULT_SIZE_PERCENT = 65
 MIN_SIZE_PERCENT = 30
@@ -785,7 +790,7 @@ class StatusBubble:
         pet_x = self.pet.root.winfo_x()
         pet_y = self.pet.root.winfo_y()
         x = pet_x + pet_w // 2 - self.width // 2
-        y = pet_y - self.height - 7
+        y = pet_y + self.pet._bubble_anchor_top() - self.height - 7
         desktop_left, desktop_top, desktop_right, desktop_bottom = (
             self.pet.virtual_desktop()
         )
@@ -1150,6 +1155,7 @@ class PetWindow:
         self.gesture_token = 0
         self.gesture_after_job = None
         self.last_click_pose = None
+        self.click_pose_bag = []
         self.single_click_job = None
         self.overlay_health_job = None
         self.frame = 0
@@ -1183,6 +1189,12 @@ class PetWindow:
                     frames = [Image.open(fallback).convert("RGBA")]
             if frames:
                 self.poses[pose_name] = frames
+        self.pose_top = 100
+        for frames in self.poses.values():
+            for frame in frames:
+                bbox = self._pose_cell(frame).getchannel("A").getbbox()
+                if bbox:
+                    self.pose_top = min(self.pose_top, bbox[1])
         self.root = tk.Tk()
         self.root.title("Mint Budgie")
         self.root.overrideredirect(True)
@@ -1310,20 +1322,59 @@ class PetWindow:
         return left, top
 
     def _display_width(self) -> int:
-        return round(CELL_W * DEFAULT_SCALE * self.size_percent / 100)
+        return round(POSE_CELL_W * DEFAULT_SCALE * self.size_percent / 100)
 
     def _display_height(self) -> int:
-        return round(CELL_H * DEFAULT_SCALE * self.size_percent / 100)
+        return round(POSE_CELL_H * DEFAULT_SCALE * self.size_percent / 100)
 
     def _window_size(self):
-        # Reserve the full 192x208 cell so wide head-tilt and wing frames never
-        # clip at the top or sides while the pet body stays on one baseline.
+        # Every state uses the same 320x320 pose canvas so the standing frame
+        # and gesture frames keep the same apparent size when switching.
         margin = 8
         return self._display_width() + margin * 2, self._display_height() + margin * 2
+
+    def _bubble_anchor_top(self) -> int:
+        """Keep the task bubble just above the tallest possible pose."""
+        scale = self._display_height() / POSE_CELL_H
+        return self._sprite_top() + round(self.pose_top * scale)
 
     @staticmethod
     def _sprite_top() -> int:
         return 8
+
+    @staticmethod
+    def _pose_cell(cell: Image.Image) -> Image.Image:
+        """Place a sheet cell on the same canvas used by generated poses."""
+        if cell.size == (POSE_CELL_W, POSE_CELL_H):
+            return cell
+        bbox = cell.getchannel("A").getbbox()
+        if not bbox:
+            return Image.new("RGBA", (POSE_CELL_W, POSE_CELL_H), (0, 0, 0, 0))
+        content = cell.crop(bbox)
+        if cell.size == (CELL_W, CELL_H):
+            # Preserve the sheet's motion and horizontal placement while
+            # mapping its foot baseline into the gesture canvas.
+            left = (POSE_CELL_W - CELL_W) // 2 + bbox[0]
+            top = (POSE_BASELINE - SHEET_BASELINE) + bbox[1]
+            canvas = Image.new("RGBA", (POSE_CELL_W, POSE_CELL_H), (0, 0, 0, 0))
+            canvas.alpha_composite(content, (left, top))
+            return canvas
+        max_width = POSE_CELL_W - POSE_PADDING * 2
+        max_height = POSE_BASELINE - POSE_PADDING
+        if content.width > max_width or content.height > max_height:
+            scale = min(max_width / content.width, max_height / content.height)
+            content = content.resize(
+                (
+                    max(1, round(content.width * scale)),
+                    max(1, round(content.height * scale)),
+                ),
+                Image.Resampling.NEAREST,
+            )
+        canvas = Image.new("RGBA", (POSE_CELL_W, POSE_CELL_H), (0, 0, 0, 0))
+        left = (POSE_CELL_W - content.width) // 2
+        top = POSE_BASELINE - content.height
+        canvas.alpha_composite(content, (left, top))
+        return canvas
 
     def _scaled_running_jump(self, cell: Image.Image) -> Image.Image:
         """Keep the work bob, but reduce its vertical travel to 40%."""
@@ -1333,7 +1384,9 @@ class PetWindow:
         if not bbox:
             return cell
         _, _, _, bottom = bbox
-        target_bottom = round(194 - (194 - bottom) * RUNNING_JUMP_SCALE)
+        target_bottom = round(
+            POSE_BASELINE - (POSE_BASELINE - bottom) * RUNNING_JUMP_SCALE
+        )
         shift = target_bottom - bottom
         if shift <= 0:
             return cell
@@ -1444,8 +1497,14 @@ class PetWindow:
         self._start_gesture(pose)
 
     def _next_click_gesture(self):
-        choices = [pose for pose in CLICK_POSES if pose != self.last_click_pose]
-        pose = random.choice(choices or list(CLICK_POSES))
+        if not self.click_pose_bag:
+            bag = list(CLICK_POSES)
+            random.shuffle(bag)
+            # Avoid repeating the previous action across bag boundaries.
+            if self.last_click_pose in bag and bag[0] == self.last_click_pose:
+                bag[0], bag[-1] = bag[-1], bag[0]
+            self.click_pose_bag = bag
+        pose = self.click_pose_bag.pop(0)
         self.last_click_pose = pose
         return pose
 
@@ -1886,7 +1945,7 @@ class PetWindow:
         display_h = self._display_height()
         if self.pose in GESTURE_POSES and self.pose in self.poses:
             frames = self.poses[self.pose]
-            cell = frames[self.frame % len(frames)]
+            cell = self._pose_cell(frames[self.frame % len(frames)])
             cell = cell.resize((display_w, display_h), Image.Resampling.NEAREST)
             composed = Image.new("RGBA", (width, height), (0, 0, 0, 0))
             composed.alpha_composite(
@@ -1897,6 +1956,7 @@ class PetWindow:
             # The pose folders contain edited close-up frames. The top-left
             # sheet cell is the original upright standing frame used by Codex.
             cell = self.sheet.crop((0, 0, CELL_W, CELL_H))
+            cell = self._pose_cell(cell)
             cell = cell.resize((display_w, display_h), Image.Resampling.NEAREST)
             composed = Image.new("RGBA", (width, height), (0, 0, 0, 0))
             composed.alpha_composite(
@@ -1909,6 +1969,7 @@ class PetWindow:
             left = self.frame * CELL_W
             top = row_index * CELL_H
             cell = self.sheet.crop((left, top, left + CELL_W, top + CELL_H))
+            cell = self._pose_cell(cell)
             cell = self._scaled_running_jump(cell)
             cell = cell.resize((display_w, display_h), Image.Resampling.NEAREST)
             composed = Image.new("RGBA", (width, height), (0, 0, 0, 0))
