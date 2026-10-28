@@ -41,6 +41,9 @@ DEFAULT_SETTINGS_HEIGHT = 270
 POSE_NAMES = ("idle", "head-tilt", "head-stretch", "cheer", "wave")
 GESTURE_POSES = ("head-tilt", "head-stretch", "cheer", "wave")
 CLICK_POSES = ("head-tilt", "head-stretch", "cheer", "wave")
+IDLE_POSES = CLICK_POSES
+IDLE_GESTURE_MIN_DELAY_MS = 30_000
+IDLE_GESTURE_MAX_DELAY_MS = 75_000
 STAND_FRAME_MS = 80
 POSE_FRAME_MS = {
     "idle": 1000,
@@ -1156,6 +1159,8 @@ class PetWindow:
         self.gesture_after_job = None
         self.last_click_pose = None
         self.click_pose_bag = []
+        self.last_idle_pose = None
+        self.idle_gesture_job = None
         self.single_click_job = None
         self.overlay_health_job = None
         self.frame = 0
@@ -1496,6 +1501,46 @@ class PetWindow:
         self._log(f"single-click gesture pose={pose}")
         self._start_gesture(pose)
 
+    def _schedule_idle_gesture(self):
+        self._cancel_idle_gesture()
+        if self.status != "idle" or self.pose in GESTURE_POSES:
+            return
+        delay = random.randint(
+            IDLE_GESTURE_MIN_DELAY_MS,
+            IDLE_GESTURE_MAX_DELAY_MS,
+        )
+        self._log(f"idle gesture scheduled delay={delay}ms")
+        self.idle_gesture_job = self.root.after(delay, self._run_idle_gesture)
+
+    def _run_idle_gesture(self):
+        self.idle_gesture_job = None
+        if self.status != "idle" or self.pose in GESTURE_POSES:
+            return
+        pose = self._next_idle_gesture()
+        self._log(f"idle gesture pose={pose}")
+        self._start_gesture(pose)
+
+    def _next_idle_gesture(self):
+        available = [
+            pose
+            for pose in IDLE_POSES
+            if pose in self.poses and pose != self.last_idle_pose
+        ]
+        if not available:
+            available = [pose for pose in IDLE_POSES if pose in self.poses]
+        pose = random.choice(available) if available else IDLE_POSES[0]
+        self.last_idle_pose = pose
+        return pose
+
+    def _cancel_idle_gesture(self):
+        if self.idle_gesture_job is None:
+            return
+        try:
+            self.root.after_cancel(self.idle_gesture_job)
+        except tk.TclError:
+            pass
+        self.idle_gesture_job = None
+
     def _next_click_gesture(self):
         if not self.click_pose_bag:
             bag = list(CLICK_POSES)
@@ -1521,6 +1566,7 @@ class PetWindow:
         if pose not in GESTURE_POSES or pose not in self.poses:
             self._log(f"gesture skipped pose={pose}: pose unavailable")
             return
+        self._cancel_idle_gesture()
         self._cancel_gesture_timer()
         self.pose = pose
         self.gesture_token += 1
@@ -1566,6 +1612,7 @@ class PetWindow:
         self.pose = "idle"
         self.frame = 0
         self._render_frame()
+        self._schedule_idle_gesture()
 
     def _cancel_gesture_timer(self):
         if self.gesture_after_job is None:
@@ -1895,6 +1942,11 @@ class PetWindow:
                 self.frame = 0
             self.bubble.update(visible_status, self.task, activity)
             self._render_frame()
+            if self.status == "idle":
+                if self.idle_gesture_job is None:
+                    self._schedule_idle_gesture()
+            else:
+                self._cancel_idle_gesture()
             reassert_overlay(self.root)
         self.root.after(120, self._tick_state)
 

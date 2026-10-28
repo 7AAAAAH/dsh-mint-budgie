@@ -9,6 +9,8 @@ English | [简体中文](README.zh.md)
 ## Features
 
 - Drag the pet across every monitor on the Windows virtual desktop.
+- While idle, the pet plays a random gesture every 30–75 seconds using a
+  randomized delay and avoids repeating the same gesture consecutively.
 - Single-click plays one random gesture: head tilt, head stretch, spread
   wings or side-wing wave. Every gesture starts and ends in the standing pose.
 - Gesture frames normalize the apparent head scale while allowing each pose
