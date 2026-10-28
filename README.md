@@ -15,6 +15,8 @@ English | [简体中文](README.zh.md)
   wings or side-wing wave. Every gesture starts and ends in the standing pose.
 - Gesture frames normalize the apparent head scale while allowing each pose
   to keep its own position and perspective.
+- Both the pet and task bubble detect per-monitor work areas, shift away
+  from screen edges and never straddle a dual-monitor boundary.
 - Double-click opens or hides the dsh window. If an active task bubble is
   minimized, the same double-click restores it.
 - Right-click for settings or to hide the pet.

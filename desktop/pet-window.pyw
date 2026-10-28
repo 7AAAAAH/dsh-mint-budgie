@@ -112,6 +112,7 @@ BUBBLE_WIDTH = 284
 BUBBLE_HEIGHT = 65
 BUBBLE_RADIUS = 18
 BUBBLE_OPACITY = 0.88
+BUBBLE_EDGE_MARGIN = 8
 MARQUEE_STEP_MS = 38
 OVERLAY_HEALTH_CHECK_MS = 2000
 
@@ -793,14 +794,38 @@ class StatusBubble:
         pet_x = self.pet.root.winfo_x()
         pet_y = self.pet.root.winfo_y()
         x = pet_x + pet_w // 2 - self.width // 2
-        y = pet_y + self.pet._bubble_anchor_top() - self.height - 7
-        desktop_left, desktop_top, desktop_right, desktop_bottom = (
-            self.pet.virtual_desktop()
+        work_left, work_top, work_right, work_bottom = (
+            self.pet._work_area_for_rect(pet_x, pet_y, pet_w, pet_h)
         )
-        if y < desktop_top:
-            y = pet_y + pet_h + 4
-        x = clamp(x, desktop_left, max(desktop_left, desktop_right - self.width))
-        y = clamp(y, desktop_top, max(desktop_top, desktop_bottom - self.height))
+        x = clamp(
+            x,
+            work_left + BUBBLE_EDGE_MARGIN,
+            max(
+                work_left + BUBBLE_EDGE_MARGIN,
+                work_right - self.width - BUBBLE_EDGE_MARGIN,
+            ),
+        )
+        above_y = pet_y + self.pet._bubble_anchor_top() - self.height - 7
+        below_y = pet_y + pet_h + 4
+        if (
+            above_y >= work_top + BUBBLE_EDGE_MARGIN
+            and above_y + self.height <= work_bottom - BUBBLE_EDGE_MARGIN
+        ):
+            y = above_y
+        elif (
+            below_y >= work_top + BUBBLE_EDGE_MARGIN
+            and below_y + self.height <= work_bottom - BUBBLE_EDGE_MARGIN
+        ):
+            y = below_y
+        else:
+            y = clamp(
+                above_y,
+                work_top + BUBBLE_EDGE_MARGIN,
+                max(
+                    work_top + BUBBLE_EDGE_MARGIN,
+                    work_bottom - self.height - BUBBLE_EDGE_MARGIN,
+                ),
+            )
         self.window.geometry(f"+{x}+{y}")
 
     def destroy(self):
@@ -1312,17 +1337,113 @@ class PetWindow:
             user32.GetSystemMetrics(77) + user32.GetSystemMetrics(79),
         )
 
+    @staticmethod
+    def monitor_work_areas():
+        """Return each monitor's usable rectangle in virtual-screen pixels."""
+        if sys.platform != "win32":
+            return []
+
+        class Rect(ctypes.Structure):
+            _fields_ = [
+                ("left", wintypes.LONG),
+                ("top", wintypes.LONG),
+                ("right", wintypes.LONG),
+                ("bottom", wintypes.LONG),
+            ]
+
+        class MonitorInfo(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", wintypes.DWORD),
+                ("rcMonitor", Rect),
+                ("rcWork", Rect),
+                ("dwFlags", wintypes.DWORD),
+            ]
+
+        try:
+            user32 = ctypes.WinDLL("user32", use_last_error=True)
+            user32.GetMonitorInfoW.argtypes = [
+                wintypes.HMONITOR,
+                ctypes.POINTER(MonitorInfo),
+            ]
+            user32.GetMonitorInfoW.restype = wintypes.BOOL
+            callback_type = ctypes.WINFUNCTYPE(
+                wintypes.BOOL,
+                wintypes.HMONITOR,
+                wintypes.HDC,
+                ctypes.POINTER(Rect),
+                wintypes.LPARAM,
+            )
+            result = []
+
+            @callback_type
+            def collect(hmonitor, _hdc, _rect, _data):
+                info = MonitorInfo()
+                info.cbSize = ctypes.sizeof(info)
+                if user32.GetMonitorInfoW(hmonitor, ctypes.byref(info)):
+                    work = info.rcWork
+                    result.append((work.left, work.top, work.right, work.bottom))
+                return True
+
+            user32.EnumDisplayMonitors.argtypes = [
+                wintypes.HDC,
+                ctypes.POINTER(Rect),
+                callback_type,
+                wintypes.LPARAM,
+            ]
+            user32.EnumDisplayMonitors.restype = wintypes.BOOL
+            if not user32.EnumDisplayMonitors(None, None, collect, 0):
+                return []
+            return result
+        except (AttributeError, OSError, TypeError, ValueError):
+            return []
+
+    @classmethod
+    def _work_area_for_rect(
+        cls,
+        left: int,
+        top: int,
+        width: int,
+        height: int,
+    ):
+        """Pick the monitor containing the pet, then use only its work area."""
+        right = left + width
+        bottom = top + height
+        center_x = left + width // 2
+        center_y = top + height // 2
+        work_areas = cls.monitor_work_areas()
+        if not work_areas:
+            return cls.virtual_desktop()
+        for area in work_areas:
+            if area[0] <= center_x < area[2] and area[1] <= center_y < area[3]:
+                return area
+
+        def overlap(area):
+            overlap_width = max(
+                0,
+                min(right, area[2]) - max(left, area[0]),
+            )
+            overlap_height = max(
+                0,
+                min(bottom, area[3]) - max(top, area[1]),
+            )
+            return overlap_width * overlap_height
+
+        return max(work_areas, key=overlap)
+
     def _clamp_to_screen(self, left: int, top: int, width: int, height: int):
-        desktop_left, desktop_top, desktop_right, desktop_bottom = (
-            self.virtual_desktop()
+        work_left, work_top, work_right, work_bottom = self._work_area_for_rect(
+            left,
+            top,
+            width,
+            height,
         )
         left = max(
-            desktop_left,
-            min(left, max(desktop_left, desktop_right - width)),
+            work_left,
+            min(left, max(work_left, work_right - width)),
         )
         top = max(
-            desktop_top,
-            min(top, max(desktop_top, desktop_bottom - height)),
+            work_top,
+            min(top, max(work_top, work_bottom - height)),
         )
         return left, top
 
